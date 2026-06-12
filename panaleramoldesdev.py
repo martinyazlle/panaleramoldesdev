@@ -401,8 +401,8 @@ else:
         opciones_disponibles = ["💰 Caja"]
         
         if st.session_state.rol == "Administrador":
-            opciones_disponibles.extend(["📋 Historial de Ventas", "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
-        "📦 Stock", "👥 Clientes", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", "💰 Caja", "📈 Estadísticas"])
+            opciones_disponibles.extend(["🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
+        "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", "📈 Estadísticas"])
         elif st.session_state.rol == "Vendedor":
             opciones_disponibles.extend(["🛒 Punto de Venta", "👥 Clientes"])
         
