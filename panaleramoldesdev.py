@@ -966,6 +966,7 @@ else:
                             metodo = pago["metodo"]
                             monto = float(pago["monto"])
                             
+                            # A. REGISTRO DE INGRESO (Siempre ocurre)
                             db.table("CAJA").insert({
                                 "ID_Turno": id_turno_val,
                                 "Fecha": datetime.now().isoformat(),
@@ -975,7 +976,19 @@ else:
                                 "Forma_Pago": metodo
                             }).execute()
 
-                            if metodo != "Efectivo":
+                            # B. EGRESO AUTOMÁTICO (Si es Efectivo + Reparto)
+                            if metodo == "Efectivo" and st.session_state.tipo_entrega == "Reparto":
+                                db.table("CAJA").insert({
+                                    "ID_Turno": id_turno_val,
+                                    "Fecha": datetime.now().isoformat(),
+                                    "Tipo": "Egreso",
+                                    "Concepto": f"RETIRO POR REPARTO (Venta {id_v})",
+                                    "Monto": monto,
+                                    "Forma_Pago": "Efectivo"
+                                }).execute()
+                                
+                            # C. EGRESO AUTOMÁTICO (Si NO es Efectivo, ya lo tenías así)
+                            elif metodo != "Efectivo":
                                 db.table("CAJA").insert({
                                     "ID_Turno": id_turno_val,
                                     "Fecha": datetime.now().isoformat(),
