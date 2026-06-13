@@ -376,6 +376,21 @@ else:
             
         return True
 
+    def ocultar_menu_y_footer():
+        ocultar_st_style = """
+                <style>
+                #MainMenu {visibility: hidden;}
+                footer {visibility: hidden;}
+                header {visibility: hidden;}
+                /* Esto oculta el botón de 'Manage App' que aparece a veces en Cloud */
+                [data-testid="stToolbar"] {visibility: hidden;}
+                </style>
+                """
+        st.markdown(ocultar_st_style, unsafe_allow_html=True)
+
+    # Llama a la función al inicio de tu app
+    ocultar_menu_y_footer()
+
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
 
