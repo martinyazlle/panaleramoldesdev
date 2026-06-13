@@ -940,12 +940,13 @@ else:
                         turno_res = db.table("CONTROL_TURNOS").select("ID_Turno").eq("Estado", "Abierto").maybe_single().execute()
                         id_turno_val = turno_res.data['ID_Turno'] if (turno_res and turno_res.data) else "SIN_TURNO"
 
-                        # 2. Registrar Cabecera
+                        # 2. Registrar Cabecera (AÑADIDO ID_Vendedor)
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
                         db.table("VENTAS_CABECERA").insert({
                             "ID_Venta": id_v,
                             "Fecha": f,
                             "ID_Cliente": id_cliente_final,
+                            "ID_Vendedor": st.session_state.get("id_vendedor", "1"), # <--- CORRECCIÓN AQUÍ
                             "Forma_Pago": desglose_pagos,
                             "Total": total_final_vta,
                             "Forma_Entrega": st.session_state.tipo_entrega,
@@ -1002,7 +1003,7 @@ else:
                                     "Forma_Pago": "Efectivo"
                                 }).execute()
                                 
-                            # C. EGRESO AUTOMÁTICO (Si NO es Efectivo, ya lo tenías así)
+                            # C. EGRESO AUTOMÁTICO (Si NO es Efectivo)
                             elif metodo != "Efectivo":
                                 db.table("CAJA").insert({
                                     "ID_Turno": id_turno_val,
@@ -1019,7 +1020,7 @@ else:
 
                         st.success("✅ Venta registrada correctamente!")
                         st.session_state.carrito_vta = []
-                        st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}] # Resetear pagos
+                        st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
                         st.rerun()
 
                     except Exception as e:
