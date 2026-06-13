@@ -650,41 +650,39 @@ else:
             
             df_clie['Display'] = (df_clie['Nombre'].astype(str) + " " + df_clie['Apellido'].astype(str) + " (" + df_clie['Telefono'].astype(str) + ")")
             
-            # --- LOGICA PARA EL VALOR INICIAL ---
+            # --- LOGICA MEJORADA DE PERSISTENCIA ---
+            # Si tenemos un ID recuperado, lo usamos para buscar el display inicial
             valor_inicial = None
-            if 'cliente_recuperado' in st.session_state:
-                # Buscamos en df_clie el display que coincida con el nombre recuperado
-                # (Nota: Asumo que el nombre en 'v['Cliente']' es "Nombre Apellido")
-                candidatos = df_clie[df_clie['Nombre'] + " " + df_clie['Apellido'] == st.session_state.cliente_recuperado]['Display']
+            if 'id_cliente_recuperado' in st.session_state:
+                candidatos = df_clie[df_clie['ID_Cliente'].astype(str) == str(st.session_state.id_cliente_recuperado)]
                 if not candidatos.empty:
-                    valor_inicial = candidatos.iloc[0]
-                    # Limpiamos el estado temporal para que no se quede pegado
-                    del st.session_state.cliente_recuperado
+                    valor_inicial = candidatos.iloc[0]['Display']
 
+            # 1. Inicialización segura
+            cliente_nombre_final = "Consumidor Final"
+            id_cliente_final = "0"
+            cliente_sel_row = None
+
+            # 2. Tu Selectbox
             cliente_display = c1.selectbox(
                 "👤 Buscar Cliente", 
                 options=df_clie['Display'].tolist(),
-                index=df_clie['Display'].tolist().index(valor_inicial) if valor_inicial else None, 
+                index=df_clie['Display'].tolist().index(valor_inicial) if valor_inicial and valor_inicial in df_clie['Display'].tolist() else None, 
                 placeholder="Seleccione o busque un cliente..."
             )
             
+            # 3. Lógica de asignación
             if cliente_display:
                 cliente_sel_row = df_clie[df_clie['Display'] == cliente_display].iloc[0]
-                cliente_nombre_final = cliente_sel_row['Nombre']
+                cliente_nombre_final = cliente_sel_row['Nombre'] + " " + cliente_sel_row['Apellido']
                 id_cliente_final = str(cliente_sel_row['ID_Cliente'])
+                st.session_state.id_cliente_recuperado = id_cliente_final # Persistencia
             else:
+                # Si no hay nada seleccionado, aseguramos los valores por defecto
+                id_cliente_final = "0"
                 cliente_nombre_final = "Consumidor Final"
-                # --- EN LA SECCIÓN DE SELECTORES ---
-                id_cliente_final = "0" # Valor por defecto
-
                 if 'id_cliente_recuperado' in st.session_state:
-                    id_cliente_final = st.session_state.id_cliente_recuperado
-                    del st.session_state.id_cliente_recuperado # Limpiamos
-
-                # Si el usuario cambia manualmente el cliente en el selectbox, esto sobrescribirá el ID
-                if cliente_display:
-                    cliente_sel_row = df_clie[df_clie['Display'] == cliente_display].iloc[0]
-                    id_cliente_final = str(cliente_sel_row['ID_Cliente'])
+                    del st.session_state.id_cliente_recuperado
 
             # Vendedor ahora en c2
             vendedor_sel = c2.selectbox("👔 Vendedor", df_vend['Nombre'].tolist())
@@ -1003,12 +1001,9 @@ else:
                 if st.button("⏳ GUARDAR COMO PENDIENTE", use_container_width=True):
                     import json
                     try:
-                        # Obtenemos el apellido del cliente seleccionado
-                        # Cerca del inicio de la sección de botones
-                        cliente_apellido_final = ""
-                        if cliente_display:
-                            cliente_sel_row = df_clie[df_clie['Display'] == cliente_display].iloc[0]
-                            cliente_apellido_final = cliente_sel_row['Apellido']
+                        # Ya no necesitas buscar el apellido manualmente, 
+                        # ya definiste 'cliente_nombre_final' arriba en el bloque de selectores.
+                        # Solo asegúrate de que el formato de "Cliente" en tu DB sea consistente.
                         
                         # Preparamos el mismo desglose para el pendiente
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
@@ -1017,8 +1012,8 @@ else:
                             "ID_Pendiente": f"PEND-{datetime.now().strftime('%Y%m%d%H%M%S')}",
                             "Fecha": datetime.now().strftime('%Y-%m-%d'),
                             "Hora": datetime.now().strftime('%H:%M:%S'),
-                            "Cliente": f"{cliente_nombre_final} {cliente_apellido_final}",
-                            "ID_Cliente_Pendiente": id_cliente_final,
+                            "Cliente": cliente_nombre_final, # Usamos la variable que ya definimos arriba
+                            "ID_Cliente_Pendiente": id_cliente_final, # Usamos la variable que ya definimos arriba
                             "Vendedor": vendedor_sel,
                             "Metodo_Pago": desglose_pagos,
                             "Pagos_JSON": json.dumps(st.session_state.pagos_split),
@@ -1031,7 +1026,13 @@ else:
                         
                         db.table("VENTAS_PENDIENTES").insert(data_to_insert).execute()
                         st.toast("Venta guardada como pendiente", icon="⏳")
+                        
+                        # Limpieza post-guardado
                         st.session_state.carrito_vta = []
+                        st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
+                        if 'id_cliente_recuperado' in st.session_state:
+                            del st.session_state.id_cliente_recuperado
+                            
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al guardar pendiente: {e}")
