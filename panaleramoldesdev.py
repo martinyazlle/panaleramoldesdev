@@ -1001,19 +1001,13 @@ else:
                 if st.button("⏳ GUARDAR COMO PENDIENTE", use_container_width=True):
                     import json
                     try:
-                        # Ya no necesitas buscar el apellido manualmente, 
-                        # ya definiste 'cliente_nombre_final' arriba en el bloque de selectores.
-                        # Solo asegúrate de que el formato de "Cliente" en tu DB sea consistente.
-                        
-                        # Preparamos el mismo desglose para el pendiente
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
-
-                        data_to_insert = {
-                            "ID_Pendiente": f"PEND-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                        
+                        data_to_save = {
                             "Fecha": datetime.now().strftime('%Y-%m-%d'),
                             "Hora": datetime.now().strftime('%H:%M:%S'),
-                            "Cliente": cliente_nombre_final, # Usamos la variable que ya definimos arriba
-                            "ID_Cliente_Pendiente": id_cliente_final, # Usamos la variable que ya definimos arriba
+                            "Cliente": cliente_nombre_final,
+                            "ID_Cliente_Pendiente": id_cliente_final,
                             "Vendedor": vendedor_sel,
                             "Metodo_Pago": desglose_pagos,
                             "Pagos_JSON": json.dumps(st.session_state.pagos_split),
@@ -1023,13 +1017,26 @@ else:
                             "Link_Maps_Entrega": st.session_state.link_maps_entrega,
                             "Fecha_Entrega": st.session_state.fecha_reparto
                         }
-                        
-                        db.table("VENTAS_PENDIENTES").insert(data_to_insert).execute()
-                        st.toast("Venta guardada como pendiente", icon="⏳")
-                        
+
+                        # --- LA LOGICA DE DETECCIÓN ---
+                        if 'id_pendiente_cargado' in st.session_state and st.session_state.id_pendiente_cargado:
+                            # Si existe el ID, actualizamos el registro existente
+                            db.table("VENTAS_PENDIENTES") \
+                            .update(data_to_save) \
+                            .eq("ID_Pendiente", st.session_state.id_pendiente_cargado) \
+                            .execute()
+                            st.toast("Venta pendiente actualizada", icon="🔄")
+                        else:
+                            # Si no existe, es una venta nueva: insertamos
+                            data_to_save["ID_Pendiente"] = f"PEND-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                            db.table("VENTAS_PENDIENTES").insert(data_to_save).execute()
+                            st.toast("Venta guardada como nuevo pendiente", icon="⏳")
+
                         # Limpieza post-guardado
                         st.session_state.carrito_vta = []
                         st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
+                        if 'id_pendiente_cargado' in st.session_state:
+                            del st.session_state.id_pendiente_cargado
                         if 'id_cliente_recuperado' in st.session_state:
                             del st.session_state.id_cliente_recuperado
                             
