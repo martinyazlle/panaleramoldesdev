@@ -600,36 +600,27 @@ else:
                     st.info("📭 No hay ventas pendientes registradas.")
                 else:
                     for v in pendientes:
-                        # ... dentro del bucle for v in pendientes ...
                         with st.container(border=True):
                             st.markdown(f"**ID:** {v['ID_Pendiente']} | 📅 {v['Fecha']}")
                             st.caption(f"👤 {v['Cliente']} | 👔 {v['Vendedor']}")
                             
-                            col_a, col_b = st.columns(2)
-                            
-                            # Botón de Cargar
-                            if col_a.button("📥 Cargar", key=f"recup_{v['ID_Pendiente']}"):
+                            if st.button("📥 Cargar", key=f"recup_{v['ID_Pendiente']}"):
+                                # LIMPIEZA PREVENTIVA
+                                st.session_state.id_pendiente_cargado = v['ID_Pendiente']
                                 st.session_state.carrito_vta = json.loads(v['Detalle_JSON'])
-                                
-                                # --- RECUPERAR PAGOS Y CLIENTE ---
-                                # Simplificamos: cargamos directamente desde el JSON guardado en la BD
                                 st.session_state.pagos_split = json.loads(v.get('Pagos_JSON', '[{"metodo": "Efectivo", "monto": 0.0}]'))
                                 
+                                # Guardamos los estados para que el flujo de UI los tome en el siguiente rerun
                                 st.session_state.cliente_recuperado = v['Cliente']
                                 st.session_state.id_cliente_recuperado = v.get('ID_Cliente_Pendiente', "0")
-                                
-                                # --- BORRAMOS LA LÓGICA DE 'pagos_guardados' QUE DABA ERROR ---
-                                
                                 st.session_state.tipo_entrega = v.get('Forma_Entrega', 'Mostrador')
                                 st.session_state.direccion_entrega = v.get('Direccion_Entrega', 'N/A')
                                 st.session_state.link_maps_entrega = v.get('Link_Maps_Entrega', 'N/A')
                                 st.session_state.fecha_reparto = v.get('Fecha_Entrega', str(datetime.today().date()))
                                 
-                                db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", v['ID_Pendiente']).execute()
-                                st.rerun()
+                                st.rerun() # Esto refresca y el resto del código ahora leerá los nuevos session_state
                             
-                            # --- AQUÍ RECUPERAMOS EL BOTÓN DE ELIMINAR ---
-                            if col_b.button("🗑️ Eliminar", key=f"del_{v['ID_Pendiente']}"):
+                            if st.button("🗑️ Eliminar", key=f"del_{v['ID_Pendiente']}"):
                                 db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", v['ID_Pendiente']).execute()
                                 st.rerun()
             except Exception as e:
@@ -995,6 +986,10 @@ else:
                                     "Monto": monto,
                                     "Forma_Pago": metodo
                                 }).execute()
+
+                        if 'id_pendiente_cargado' in st.session_state:
+                            db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", st.session_state.id_pendiente_cargado).execute()
+                            del st.session_state.id_pendiente_cargado
 
                         st.success("✅ Venta registrada correctamente!")
                         st.session_state.carrito_vta = []
