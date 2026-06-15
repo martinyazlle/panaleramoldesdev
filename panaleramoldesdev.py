@@ -8,9 +8,9 @@ import re
 # Cargamos los datos de forma segura desde secrets.toml
 @st.cache_resource
 def init_connection():
-    # Lee específicamente la sección [desarrollo]
-    url = st.secrets["desarrollo"]["SUPABASE_URL"]
-    key = st.secrets["desarrollo"]["SUPABASE_KEY"]
+    # Lee específicamente la sección [produccion]
+    url = st.secrets["produccion"]["SUPABASE_URL"]
+    key = st.secrets["produccion"]["SUPABASE_KEY"]
     return create_client(url, key)
 
 # Inicializamos la conexión globalmente
