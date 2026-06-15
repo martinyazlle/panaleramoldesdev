@@ -40,6 +40,8 @@ if not st.session_state.logeado:
 
 else:
 
+    st.error("⚠️ ESTE ES EL ENTORNO DE DESARROLLO - CUALQUIER CAMBIO NO AFECTARÁ A PRODUCCIÓN")
+
     if 'lista_global_vta' not in st.session_state:
         st.session_state.lista_global_vta = "Automática (P1/P2)"
 
@@ -471,7 +473,7 @@ else:
                     dir3 = st.text_input("Dirección 3")
                     link3 = st.text_input("Link Dirección 3")
                     zona = st.selectbox("Zona*", ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"])
-                    tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "MAYORISTA"])
+                    tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "EMPRESA/ORGANISMO"])
                 
                 submitted = st.form_submit_button("Guardar Cliente")
                 
