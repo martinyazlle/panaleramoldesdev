@@ -40,8 +40,6 @@ if not st.session_state.logeado:
 
 else:
 
-    st.error("⚠️ ESTE ES EL ENTORNO DE DESARROLLO - CUALQUIER CAMBIO NO AFECTARÁ A PRODUCCIÓN")
-
     if 'lista_global_vta' not in st.session_state:
         st.session_state.lista_global_vta = "Automática (P1/P2)"
 
