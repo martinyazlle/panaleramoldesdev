@@ -483,14 +483,22 @@ else:
                     else:
                         nuevo_cliente = {
                             "Nombre": nombre.upper(), "Apellido": apellido.upper(), "DNI": dni,
-                            "CUIT": cuit, "Telefono": telefono, "Direccion_1": dir1.upper(),
-                            "Direccion_2": dir2.upper(), "Direccion_3": dir3.upper(),
-                            "Link_Direccion_1": link1, "Link_Direccion_2": link2,
-                            "Link_Direccion_3": link3, "Zona": zona, "Tipo_Cliente": tipo
+                            "Razón Social": "", "CUIT": cuit, "Telefono": telefono, 
+                            "Direccion_1": dir1.upper(), "Direccion_2": dir2.upper(), 
+                            "Direccion_3": dir3.upper(), "Link_Direccion_1": link1, 
+                            "Link_Direccion_2": link2, "Link_Direccion_3": link3, 
+                            "Zona": zona, "Tipo_Cliente": tipo, "Observaciones": ""
                         }
-                        db.table("CLIENTES").insert(nuevo_cliente).execute()
-                        st.success("✅ Cliente cargado!")
-                        st.rerun()
+                        
+                        # --- DEBUG: IMPRIME ESTO EN TU CONSOLA ---
+                        print("Intentando insertar:", nuevo_cliente)
+                        
+                        try:
+                            db.table("CLIENTES").insert(nuevo_cliente).execute()
+                            st.success("✅ Cliente cargado!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error técnico: {e}")
 
         if tab_modificar is not None:
             with tab_modificar:
