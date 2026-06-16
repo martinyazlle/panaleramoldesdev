@@ -16,18 +16,6 @@ def init_connection():
 # Inicializamos la conexión globalmente
 db = init_connection()
 
-# Supongamos que 'df' es el dataframe con tus datos de Supabase
-# Si tu columna de fecha se llama 'fecha_movimiento':
-
-# 1. Aseguramos que la columna sea de tipo datetime
-df['fecha_movimiento'] = pd.to_datetime(df['fecha_movimiento'])
-
-# 2. Le restamos las 3 horas para ajustar a Salta
-df['fecha_local'] = df['fecha_movimiento'] - timedelta(hours=3)
-
-# 3. Ahora muestras 'fecha_local' en tu app
-st.dataframe(df)
-
 # 2. LÓGICA DE LOGIN
 if 'logeado' not in st.session_state:
     st.session_state.logeado = False
