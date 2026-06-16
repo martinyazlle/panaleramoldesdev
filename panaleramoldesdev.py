@@ -4,7 +4,16 @@ import pandas as pd
 from datetime import datetime, timedelta
 import re
 
-hora_local = datetime.utcnow() - timedelta(hours=3)
+# Obtenemos la hora UTC actual del servidor
+# El .replace(tzinfo=None) asegura que no haya conflicto de zonas horarias
+hora_utc = datetime.utcnow()
+
+# Restamos 3 horas (el offset de Argentina es UTC-3)
+hora_local = hora_utc - timedelta(hours=3)
+
+# Ahora 'hora_local' es un objeto datetime que puedes usar sin problemas
+# Si necesitas mostrarla como texto:
+hora_str = hora_local.strftime('%d/%m/%Y %H:%M:%S')
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
