@@ -4,6 +4,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 import re
 
+st.write("Versión del archivo cargada: 2026-06-16-12:00")
+
 # Obtenemos la hora UTC actual del servidor
 # El .replace(tzinfo=None) asegura que no haya conflicto de zonas horarias
 hora_utc = datetime.utcnow()
