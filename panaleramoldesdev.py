@@ -4,11 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import re
 
-# Obtenemos la hora UTC actual
-hora_utc = datetime.utcnow()
-
-# Ajustamos restando 3 horas para obtener la hora de Argentina (UTC-3)
-hora_local = hora_utc - timedelta(hours=3)
+hora_local = datetime.utcnow() - timedelta(hours=3)
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
