@@ -1,12 +1,14 @@
 import streamlit as st
 from supabase import create_client # Importamos el cliente de Supabase
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
-import pytz
 
-zona_argentina = pytz.timezone('America/Argentina/Buenos_Aires')
-hora_local = datetime.now(zona_argentina)
+# Obtenemos la hora UTC actual
+hora_utc = datetime.utcnow()
+
+# Ajustamos restando 3 horas para obtener la hora de Argentina (UTC-3)
+hora_local = hora_utc - timedelta(hours=3)
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
