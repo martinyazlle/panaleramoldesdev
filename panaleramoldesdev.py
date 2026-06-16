@@ -1,8 +1,12 @@
 import streamlit as st
 from supabase import create_client # Importamos el cliente de Supabase
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
+import pytz
+
+zona_argentina = pytz.timezone('America/Argentina/Buenos_Aires')
+hora_local = datetime.now(zona_argentina)
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
