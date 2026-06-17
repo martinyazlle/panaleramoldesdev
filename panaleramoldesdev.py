@@ -704,10 +704,13 @@ else:
         st.subheader("🔍 Añadir Productos")
 
         # --- FILTRO DE DISPONIBILIDAD ---
-        # Filtramos solo los que tienen stock > 0
-        df_disponible = df_prod[df_prod['Stock_Actual'] > 0].copy()
+        # Filtramos: (Tiene stock positivo) O (Es un concepto financiero / No stockeable)
+        # Nota: Asegúrate que el nombre de columna sea el correcto (Stock_Actual)
+        df_disponible = df_prod[
+            (df_prod['Stock_Actual'] > 0) | (df_prod['Es_Stockeable'] == False)
+        ].copy()
         
-        # Creamos la lista formateada solo con los disponibles
+        # Creamos la lista formateada con los resultados del filtro
         opciones_productos = (df_disponible['Nombre'] + " - " + df_disponible['ID_Producto'].astype(str)).tolist()
 
         col_bus1, col_bus2 = st.columns([2, 1])
@@ -721,14 +724,15 @@ else:
             on_change=procesar_seleccion_manual 
         )
         
-        # Aviso si el usuario busca un producto sin stock
-        # (Comparamos el buscador contra el df_prod total para detectar si existe pero no tiene stock)
+        # Aviso: Ahora solo avisaremos si un producto FÍSICO no tiene stock. 
+        # Los productos con Es_Stockeable = False no dispararán esta advertencia.
         if 'prod_manual_key' in st.session_state and st.session_state.prod_manual_key:
             busqueda = st.session_state.prod_manual_key
             id_buscado = busqueda.split(" - ")[-1]
             prod_buscado = df_prod[df_prod['ID_Producto'].astype(str) == id_buscado].iloc[0]
             
-            if prod_buscado['Stock_Actual'] <= 0:
+            # Solo advertimos si es un producto real sin stock
+            if prod_buscado['Stock_Actual'] <= 0 and prod_buscado['Es_Stockeable'] == True:
                 st.warning(f"⚠️ El producto '{prod_buscado['Nombre']}' no se puede agregar porque no cuenta con stock.")
 
         # 4. CARRITO (Versión Corregida)
@@ -1900,14 +1904,38 @@ else:
                 es_valido, nro_fact = validar_y_grabar(es_obligatorio=True)
                 
                 if es_valido:
-                    # AQUÍ VA TU CÓDIGO DE REGISTRO DE STOCK (lo que tenías antes)
                     id_c = f"COM-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    
+                    # 1. Guardar Cabecera
                     db.table("COMPRAS_CABECERA").insert({
                         "ID_Compra": id_c, "Fecha": str(fecha_factura), "Proveedor": prov_sel, 
                         "Nro_Factura": nro_fact, "Metodo_Pago": pago_compra, "Total_Compra": float(total_final)
                     }).execute()
-                    # ... (resto de tu lógica de actualizar stock y detalle)
-                    st.success("¡Compra registrada!")
+                    
+                    # 2. Lógica de registro de stock y detalle
+                    for item in st.session_state.carrito_compra:
+                        # Buscamos el producto en el DF para identificar si es stockeable
+                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
+                        
+                        # A. Solo si es stockeable, actualizamos el stock en la BD
+                        if not prod_info.empty and prod_info.iloc[0].get('Es_Stockeable') == True:
+                            # Obtenemos el stock actual de la base de datos
+                            stock_actual = prod_info.iloc[0]['Stock']
+                            nuevo_stock = int(stock_actual) + int(item['cantidad'])
+                            
+                            # Actualizamos la tabla PRODUCTOS
+                            db.table("PRODUCTOS").update({"Stock": nuevo_stock}).eq("ID_Producto", item['id']).execute()
+
+                        # B. Guardamos el detalle SIEMPRE
+                        db.table("COMPRAS_DETALLE").insert({
+                            "ID_Compra": id_c,
+                            "ID_Producto": item['id'],
+                            "Cantidad": item['cantidad'],
+                            "Precio_Costo_Unitario": item['costo'],
+                            "Subtotal": item['subtotal']
+                        }).execute()
+                    
+                    st.success("¡Compra registrada correctamente y stock actualizado!")
                     st.session_state.carrito_compra = []
                     st.rerun()
 
