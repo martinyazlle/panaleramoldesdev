@@ -43,7 +43,7 @@ else:
     if 'lista_global_vta' not in st.session_state:
         st.session_state.lista_global_vta = "Automática (P1/P2)"
 
-    # --- FUNCIONES DE UTILIDAD ---
+    # --- FUNCIONES DE UTILIDAD ---    
     def normalizar_numero(valor):
         """Convierte cualquier valor a float de forma segura."""
         try:
@@ -483,22 +483,14 @@ else:
                     else:
                         nuevo_cliente = {
                             "Nombre": nombre.upper(), "Apellido": apellido.upper(), "DNI": dni,
-                            "Razón Social": "", "CUIT": cuit, "Telefono": telefono, 
-                            "Direccion_1": dir1.upper(), "Direccion_2": dir2.upper(), 
-                            "Direccion_3": dir3.upper(), "Link_Direccion_1": link1, 
-                            "Link_Direccion_2": link2, "Link_Direccion_3": link3, 
-                            "Zona": zona, "Tipo_Cliente": tipo, "Observaciones": ""
+                            "CUIT": cuit, "Telefono": telefono, "Direccion_1": dir1.upper(),
+                            "Direccion_2": dir2.upper(), "Direccion_3": dir3.upper(),
+                            "Link_Direccion_1": link1, "Link_Direccion_2": link2,
+                            "Link_Direccion_3": link3, "Zona": zona, "Tipo_Cliente": tipo
                         }
-                        
-                        # --- DEBUG: IMPRIME ESTO EN TU CONSOLA ---
-                        print("Intentando insertar:", nuevo_cliente)
-                        
-                        try:
-                            db.table("CLIENTES").insert(nuevo_cliente).execute()
-                            st.success("✅ Cliente cargado!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error técnico: {e}")
+                        db.table("CLIENTES").insert(nuevo_cliente).execute()
+                        st.success("✅ Cliente cargado!")
+                        st.rerun()
 
         if tab_modificar is not None:
             with tab_modificar:
@@ -1727,44 +1719,50 @@ else:
 
         if factura_duplicada: st.stop()
 
-        # --- SECCIÓN: BUSCADOR Y CARRITO ---
+        # --- SECCIÓN: BUSCADOR UNIFICADO (Estilo Punto de Venta) ---
         st.subheader("🔍 Añadir Productos a la Compra")
-        col_bus1, col_bus2 = st.columns(2)
-        
-        with col_bus1:
-            # 1. Creamos una lista formateada: "Nombre - ID"
-            # Usamos .astype(str) para asegurar que el ID sea tratable como texto
-            opciones_busqueda = (df_prod['Nombre'] + " - " + df_prod['ID_Producto'].astype(str)).tolist()
-            
-            # 2. Usamos la lógica de placeholder "vacío" para mejorar la experiencia de escritura
-            # Si el usuario selecciona algo, el valor cambiará.
-            seleccion_manual = st.selectbox(
-                "Buscar por nombre o ID", 
-                ["-- Seleccionar --"] + opciones_busqueda, 
-                key=f"sel_{st.session_state.reset_manual}"
-            )
-            
-            if seleccion_manual != "-- Seleccionar --":
-                # Extraemos el ID que está después del último " - "
-                id_seleccionado = seleccion_manual.split(" - ")[-1]
+
+        # 1. Definición de la función de selección unificada
+        def procesar_seleccion_compra():
+            # Buscamos en el session_state el valor que eligió el usuario
+            seleccion = st.session_state.prod_compra_key
+            if seleccion:
+                # Extraemos el ID del texto "Nombre - ID"
+                id_seleccionado = seleccion.split(" - ")[-1]
                 
-                # Buscamos el producto por ese ID
+                # Buscamos el producto en el dataframe
                 pm = df_prod[df_prod['ID_Producto'].astype(str) == id_seleccionado].iloc[0]
                 
+                # Agregamos al carrito
                 st.session_state.carrito_compra.append({
                     "id": str(pm['ID_Producto']), 
                     "nombre": pm['Nombre'], 
                     "cantidad": 1, 
                     "costo": float(pm['Precio_Costo'] or 0), 
-                    "subtotal": float(pm['Precio_Costo'] or 0)
+                    "subtotal": float(pm['Precio_Costo'] or 0),
+                    "Precio_1": float(pm['Precio_1'] or 0),
+                    "Precio_2": float(pm['Precio_2'] or 0),
+                    "Precio_3": float(pm['Precio_3'] or 0),
+                    "Precio_4": float(pm['Precio_4'] or 0),
+                    "Precio_5": float(pm['Precio_5'] or 0)
                 })
                 
-                # Reseteamos el selectbox para que quede limpio
-                st.session_state.reset_manual += 1
-                st.rerun()
+                # IMPORTANTE: Al poner None, el selectbox se limpia automáticamente
+                st.session_state.prod_compra_key = None 
 
-        with col_bus2:
-            st.text_input("Escanear Código o ID", key="txt_barcode", on_change=procesar_escaneo)
+        # 2. Preparamos las opciones de búsqueda (Nombre + ID)
+        # Esto permite que el usuario escriba tanto el nombre como el código en el mismo lugar
+        opciones_busqueda = (df_prod['Nombre'] + " - " + df_prod['ID_Producto'].astype(str)).tolist()
+        
+        # 3. Interfaz única (Sin columnas redundantes)
+        st.selectbox(
+            "Buscar por nombre o código", 
+            options=opciones_busqueda, 
+            index=None, # Esto hace que no aparezca el "-- Seleccionar --" y se vea el placeholder
+            placeholder="Escriba para buscar producto o escanee...",
+            key="prod_compra_key",
+            on_change=procesar_seleccion_compra
+        )
 
         # --- MOSTRAR CARRITO Y EDICIÓN DE PRECIOS ---
         if st.session_state.carrito_compra:
