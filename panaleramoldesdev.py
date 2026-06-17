@@ -1793,15 +1793,22 @@ else:
                     cols_p = st.columns(5)
                     nuevos_precios = {}
                     
-                    # IMPORTANTE: Aquí calculamos el sugerido usando el n_costo obtenido arriba (que es el valor actual del input)
                     for j in range(5):
+                        # 1. Calculamos el sugerido solo para mostrarlo en el label
                         sugerido = n_costo * (1 + margenes[j])
                         
-                        # Si no se ha editado manualmente el precio, usamos el sugerido como valor por defecto
-                        # Al usar la key f"p{j+1}_{i}", el widget recordará lo que el usuario escribió
+                        # 2. LÓGICA DE PERSISTENCIA:
+                        # Si el ítem YA tiene un precio guardado, usamos ese.
+                        # Si es nuevo (no tiene precio guardado), usamos el valor que tenga en la BD (p[f'Precio_{j+1}'])
+                        # Si tampoco hay valor en BD, ahí recién usamos el 'sugerido'.
+                        precio_inicial = item.get(f'Precio_{j+1}')
+                        if precio_inicial is None:
+                            # Buscamos el precio actual en la base de datos (p_info es la serie del producto)
+                            precio_inicial = p_info.iloc[0][f'Precio_{j+1}'] if not p_info.empty else sugerido
+                        
                         nuevos_precios[f'Precio_{j+1}'] = cols_p[j].number_input(
                             f"P{j+1} (S:${sugerido:.0f})", 
-                            value=float(item.get(f'Precio_{j+1}', sugerido)),
+                            value=float(precio_inicial or 0),
                             key=f"p{j+1}_{i}"
                         )
                     
