@@ -1644,14 +1644,14 @@ else:
                     oc_sel = st.selectbox("¿Qué orden procesar?", ["-- Seleccionar --"] + opciones_oc.tolist())
                     if oc_sel != "-- Seleccionar --":
                         id_oc = oc_sel.split(" - ")[0]
-                        det_oc = pd.DataFrame(db.table("COMPRAS_DETALLE").select("*").eq("ID_Compra", id_oc).execute().data)
+                        det_oc = pd.DataFrame(db.table("DETALLE_ORDENES").select("*").eq("ID_Compra", id_oc).execute().data)
                         st.dataframe(det_oc, use_container_width=True)
                         if st.button("✏️ PROCESAR / EDITAR ORDEN"):
                             st.session_state.oc_en_edicion = id_oc
                             
                             # Recuperamos cabecera y detalle
                             cabecera_oc = db.table("ORDENES_COMPRA").select("*").eq("ID_Compra", id_oc).execute().data[0]
-                            det_oc = db.table("COMPRAS_DETALLE").select("*").eq("ID_Compra", id_oc).execute().data
+                            det_oc = db.table("DETALLE_ORDENES").select("*").eq("ID_Compra", id_oc).execute().data
                             
                             # 1. Precargar datos de cabecera en session_state
                             # (Usaremos variables temporales en session_state para alimentar los inputs)
@@ -1686,7 +1686,7 @@ else:
                             st.rerun()
                         
                         if st.button("🗑️ ELIMINAR ORDEN"):
-                            db.table("COMPRAS_DETALLE").delete().eq("ID_Compra", id_oc).execute()
+                            db.table("DETALLE_ORDENES").delete().eq("ID_Compra", id_oc).execute()
                             db.table("ORDENES_COMPRA").delete().eq("ID_Compra", id_oc).execute()
                             st.success("Eliminada.")
                             st.rerun()
@@ -1873,34 +1873,32 @@ else:
 
             # --- BOTÓN GUARDAR ORDEN ---
             if col_reg1.button("📝 GUARDAR ORDEN"):
-                # PASAMOS False para que no exija número de factura
                 _, nro_oc = validar_y_grabar(es_obligatorio=False) 
-                
                 id_oc = f"OC-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                 
+                # 1. Insertar Cabecera
                 db.table("ORDENES_COMPRA").insert({
                     "ID_Compra": id_oc, "Fecha": str(fecha_factura), "Proveedor": prov_sel, 
                     "Nro_Factura": nro_oc, "Metodo_Pago": pago_compra, "Total_Compra": float(total_final)
                 }).execute()
                     
-                # 3. Guardar Detalle
+                # 2. Guardar Detalle con validación de tipo de dato
                 for item in st.session_state.carrito_compra:
-                    db.table("COMPRAS_DETALLE").insert({
+                    # Nos aseguramos de que el ID_Producto sea texto limpio
+                    db.table("DETALLE_ORDENES").insert({
                         "ID_Compra": id_oc,
-                        "ID_Producto": item['id'],
-                        "Cantidad": item['cantidad'],
-                        "Precio_Costo_Unitario": item['costo'],
-                        "Subtotal": item['subtotal']
+                        "ID_Producto": str(item['id']).strip(), 
+                        "Cantidad": int(item['cantidad']),
+                        "Precio_Costo_Unitario": float(item['costo']),
+                        "Subtotal": float(item['subtotal'])
                     }).execute()
                     
-                    # 4. Limpiar estado y Rerun
-                    st.session_state.carrito_compra = []
-                    st.success("Orden guardada correctamente.")
-                    st.rerun()
+                st.session_state.carrito_compra = []
+                st.success("Orden guardada correctamente.")
+                st.rerun()
 
             # --- BOTÓN REGISTRAR STOCK ---
             if col_reg2.button("💾 REGISTRAR Y CARGAR STOCK", type="primary"):
-                # PASAMOS True para que EXIJA número de factura
                 es_valido, nro_fact = validar_y_grabar(es_obligatorio=True)
                 
                 if es_valido:
@@ -1912,30 +1910,27 @@ else:
                         "Nro_Factura": nro_fact, "Metodo_Pago": pago_compra, "Total_Compra": float(total_final)
                     }).execute()
                     
-                    # 2. Lógica de registro de stock y detalle
+                    # 2. Guardar Detalle y Actualizar Stock
                     for item in st.session_state.carrito_compra:
-                        # Buscamos el producto en el DF para identificar si es stockeable
-                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
+                        # Aseguramos formato de ID
+                        id_producto_limpio = str(item['id']).strip()
                         
-                        # A. Solo si es stockeable, actualizamos el stock en la BD
+                        # Actualizar Stock si corresponde
+                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == id_producto_limpio]
                         if not prod_info.empty and prod_info.iloc[0].get('Es_Stockeable') == True:
-                            # Obtenemos el stock actual de la base de datos
-                            stock_actual = prod_info.iloc[0]['Stock_Actual']
-                            nuevo_stock = int(stock_actual) + int(item['cantidad'])
-                            
-                            # Actualizamos la tabla PRODUCTOS
-                            db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock}).eq("ID_Producto", item['id']).execute()
+                            nuevo_stock = int(prod_info.iloc[0]['Stock_Actual']) + int(item['cantidad'])
+                            db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock}).eq("ID_Producto", id_producto_limpio).execute()
 
-                        # B. Guardamos el detalle SIEMPRE
-                        db.table("COMPRAS_DETALLE").insert({
+                        # Guardar Detalle
+                        db.table("DETALLE_COMPRAS").insert({
                             "ID_Compra": id_c,
-                            "ID_Producto": item['id'],
-                            "Cantidad": item['cantidad'],
-                            "Precio_Costo_Unitario": item['costo'],
-                            "Subtotal": item['subtotal']
+                            "ID_Producto": id_producto_limpio,
+                            "Cantidad": int(item['cantidad']),
+                            "Precio_Costo_Unitario": float(item['costo']),
+                            "Subtotal": float(item['subtotal'])
                         }).execute()
                     
-                    st.success("¡Compra registrada correctamente y stock actualizado!")
+                    st.success("¡Compra registrada correctamente!")
                     st.session_state.carrito_compra = []
                     st.rerun()
 
