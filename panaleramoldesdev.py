@@ -1897,14 +1897,14 @@ else:
                 st.success("Orden guardada correctamente.")
                 st.rerun()
 
-            # --- BOTÓN REGISTRAR STOCK ---
+            # --- BOTÓN REGISTRAR STOCK (dentro de tu loop de registro) ---
             if col_reg2.button("💾 REGISTRAR Y CARGAR STOCK", type="primary"):
                 es_valido, nro_fact = validar_y_grabar(es_obligatorio=True)
                 
                 if es_valido:
                     id_c = f"COM-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                     
-                    # 1. Guardar Cabecera
+                    # 1. Guardar Cabecera de Compra
                     db.table("COMPRAS_CABECERA").insert({
                         "ID_Compra": id_c, "Fecha": str(fecha_factura), "Proveedor": prov_sel, 
                         "Nro_Factura": nro_fact, "Metodo_Pago": pago_compra, "Total_Compra": float(total_final)
@@ -1930,7 +1930,18 @@ else:
                             "Subtotal": float(item['subtotal'])
                         }).execute()
                     
-                    st.success("¡Compra registrada correctamente!")
+                    # --- AQUÍ ESTÁ EL CAMBIO CLAVE ---
+                    # Si la orden estaba en edición, la eliminamos de las tablas de Órdenes
+                    if 'oc_en_edicion' in st.session_state:
+                        id_a_borrar = st.session_state.oc_en_edicion
+                        db.table("DETALLE_ORDENES").delete().eq("ID_Compra", id_a_borrar).execute()
+                        db.table("ORDENES_COMPRA").delete().eq("ID_Compra", id_a_borrar).execute()
+                        
+                        # Limpiamos el estado
+                        del st.session_state.oc_en_edicion
+                    # ----------------------------------
+                    
+                    st.success("¡Compra registrada y orden procesada correctamente!")
                     st.session_state.carrito_compra = []
                     st.rerun()
 
