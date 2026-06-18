@@ -1910,21 +1910,32 @@ else:
                         "Nro_Factura": nro_fact, "Metodo_Pago": pago_compra, "Total_Compra": float(total_final)
                     }).execute()
                     
-                    # 2. Guardar Detalle y Actualizar Stock
+                    # 2. Guardar Detalle y Actualizar Stock Y PRECIOS
                     for item in st.session_state.carrito_compra:
-                        # Aseguramos formato de ID
-                        id_producto_limpio = str(item['id']).strip()
+                        # A. Actualizar Stock, Costo y Precios (1 al 5) en la tabla PRODUCTOS
+                        # Solo si el producto es stockeable, o siempre si quieres que los precios siempre se actualicen:
                         
-                        # Actualizar Stock si corresponde
-                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == id_producto_limpio]
+                        data_update = {
+                            "Precio_Costo": float(item['costo']),
+                            "Precio_1": float(item.get('Precio_1', 0)),
+                            "Precio_2": float(item.get('Precio_2', 0)),
+                            "Precio_3": float(item.get('Precio_3', 0)),
+                            "Precio_4": float(item.get('Precio_4', 0)),
+                            "Precio_5": float(item.get('Precio_5', 0))
+                        }
+                        
+                        # Si además quieres actualizar el stock:
+                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
                         if not prod_info.empty and prod_info.iloc[0].get('Es_Stockeable') == True:
-                            nuevo_stock = int(prod_info.iloc[0]['Stock_Actual']) + int(item['cantidad'])
-                            db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock}).eq("ID_Producto", id_producto_limpio).execute()
+                            data_update["Stock_Actual"] = int(prod_info.iloc[0]['Stock_Actual']) + int(item['cantidad'])
+                        
+                        # Ejecutamos el update en la tabla PRODUCTOS
+                        db.table("PRODUCTOS").update(data_update).eq("ID_Producto", str(item['id'])).execute()
 
-                        # Guardar Detalle
+                        # B. Guardar Detalle (en tu nueva tabla DETALLE_COMPRAS)
                         db.table("DETALLE_COMPRAS").insert({
                             "ID_Compra": id_c,
-                            "ID_Producto": id_producto_limpio,
+                            "ID_Producto": str(item['id']),
                             "Cantidad": int(item['cantidad']),
                             "Precio_Costo_Unitario": float(item['costo']),
                             "Subtotal": float(item['subtotal'])
