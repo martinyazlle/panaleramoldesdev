@@ -1920,11 +1920,11 @@ else:
                         # A. Solo si es stockeable, actualizamos el stock en la BD
                         if not prod_info.empty and prod_info.iloc[0].get('Es_Stockeable') == True:
                             # Obtenemos el stock actual de la base de datos
-                            stock_actual = prod_info.iloc[0]['Stock']
+                            stock_actual = prod_info.iloc[0]['Stock_Actual']
                             nuevo_stock = int(stock_actual) + int(item['cantidad'])
                             
                             # Actualizamos la tabla PRODUCTOS
-                            db.table("PRODUCTOS").update({"Stock": nuevo_stock}).eq("ID_Producto", item['id']).execute()
+                            db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock}).eq("ID_Producto", item['id']).execute()
 
                         # B. Guardamos el detalle SIEMPRE
                         db.table("COMPRAS_DETALLE").insert({
