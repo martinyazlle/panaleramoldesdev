@@ -752,123 +752,118 @@ else:
             if prod_buscado['Stock_Actual'] <= 0 and prod_buscado['Es_Stockeable'] == True:
                 st.warning(f"⚠️ El producto '{prod_buscado['Nombre']}' no se puede agregar porque no cuenta con stock.")
 
-        # 4. CARRITO (Sección Corregida)
+        # 4. CARRITO (Versión Corregida)
         if st.session_state.carrito_vta:
             st.write("### 🛒 Detalle de la Venta")
             
-            # Función para recalcular y actualizar el estado
-            def update_cart_item(i):
-                # Se ejecuta automáticamente al cambiar cantidad, precio o lista
-                pass 
-
+            global_val = st.session_state.lista_global_vta
+            
             for i, item in enumerate(st.session_state.carrito_vta):
                 res_p = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
                 if res_p.empty: continue
                 p_data = res_p.iloc[0]
                 
-                # Usamos columnas
                 c1, c2, c3, c4, c5, c6 = st.columns([2, 1.2, 0.8, 1.2, 1, 0.5])
                 c1.write(f"**{p_data['Nombre']}**")
                 
                 # 1. Selector de Lista
-                lista_opciones = ["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"]
-                current_list = item.get('lista_local', st.session_state.get("selector_global", "Lista 1"))
+                lista_actual_producto = item.get('lista_local', global_val)
+                lista_item = c2.selectbox(
+                    "Lista", 
+                    ["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"],
+                    index=["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"].index(lista_actual_producto),
+                    key=f"L_{i}_{global_val}" 
+                )
                 
-                # Guardamos la elección directamente en el objeto del carrito
-                item['lista_local'] = c2.selectbox("Lista", lista_opciones, 
-                                                index=lista_opciones.index(current_list), 
-                                                key=f"L_{i}")
+                if lista_item != lista_actual_producto:
+                    item['lista_local'] = lista_item
+                    st.rerun()
                 
                 # 2. Cantidad
-                item['cantidad'] = c3.number_input("Cant.", min_value=1, value=int(item['cantidad']), key=f"Q_{i}")
+                n_cant = c3.number_input("Cant.", min_value=1, value=int(item['cantidad']), key=f"Q_{i}")
                 
-                # Cálculo de precio sugerido
-                lista_usada = item['lista_local']
-                n_cant = item['cantidad']
-                
-                if lista_usada == "Automática (P1/P2)":
-                    col_p = 'Precio_1' if n_cant == 1 else ('Precio_2' if n_cant == 2 else 'Precio_3')
+                # 3. Calcular el precio SUGERIDO (ANTES de usarlo en el input)
+                if lista_item == "Automática (P1/P2)":
+                    if n_cant == 1: col_p = 'Precio_1'
+                    elif n_cant == 2: col_p = 'Precio_2'
+                    else: col_p = 'Precio_3'
                 else:
-                    col_p = lista_usada.replace("Lista ", "Precio_")
+                    col_p = lista_item.replace("Lista ", "Precio_")
                 
-                precio_sugerido = float(p_data.get(col_p, 0))
+                precio_sugerido = float(p_data[col_p])
                 
-                # 3. Input Precio
-                item['precio'] = c4.number_input("Precio", value=float(item.get('precio', precio_sugerido)), 
-                                                key=f"P_{i}", format="%.2f")
+                # 4. Input Precio (El error de NameError ya no debería ocurrir)
+                n_prec = c4.number_input(
+                    "Precio", 
+                    value=precio_sugerido, 
+                    key=f"P_{i}_{lista_item}_{n_cant}_{precio_sugerido}", 
+                    format="%.2f"
+                )
                 
-                # 4. Cálculo Subtotal (Se calcula aquí, sin guardar en DB aún)
-                item['subtotal'] = item['cantidad'] * item['precio']
-                c5.write(f"Sub: **${item['subtotal']:,.2f}**")
+                # 5. Actualización
+                sub = n_cant * n_prec
+                st.session_state.carrito_vta[i].update({
+                    'cantidad': n_cant,
+                    'precio': n_prec,
+                    'subtotal': sub
+                })
                 
-                # 5. Botón eliminar
+                c5.write(f"Sub: **${sub:,.2f}**")
                 if c6.button("🗑️", key=f"del_{i}"):
                     st.session_state.carrito_vta.pop(i)
-                    st.rerun() # Solo aquí es necesario el rerun
+                    st.rerun()
 
-            # TOTAL (Al final del carrito)
-            total_final_vta = sum(float(art['subtotal']) for art in st.session_state.carrito_vta)
+        # TOTAL (Al final del carrito)
+            total_final_vta = sum(art['subtotal'] for art in st.session_state.carrito_vta)
             st.divider()
             st.markdown(f"### 💰 **Total a Cobrar: ${total_final_vta:,.2f}**")
 
-            # --- SECCIÓN DE PAGOS CORREGIDA ---
+            # --- SECCIÓN DE PAGOS ---
             st.subheader("💳 Formas de Pago")
-
+            
             metodos_db = db.table("FORMAS_PAGO").select("Nombre_Pago").eq("Activo", True).execute()
             lista_pagos = [item['Nombre_Pago'] for item in metodos_db.data] if metodos_db.data else ["Efectivo"]
-
+                
             if 'pagos_split' not in st.session_state:
                 st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
 
-            # Calculador de saldo
+            # Esta función se ejecuta apenas el usuario cambia el número y presiona TAB
+            def actualizar_valor_pago(indice):
+                # El valor nuevo ya está en st.session_state porque la key del input 
+                # coincide con el nombre de la variable
+                valor_nuevo = st.session_state[f"temp_mon_{indice}"]
+                st.session_state.pagos_split[indice]["monto"] = float(valor_nuevo)
+
+            # --- CALCULADOR DE SALDO (Se recalcula al inicio de cada rerun) ---
             suma_pagos_actual = sum(float(p["monto"]) for p in st.session_state.pagos_split)
             saldo_pendiente = total_final_vta - suma_pagos_actual
 
-            if abs(saldo_pendiente) < 0.01:
-                st.success("✅ Pago completo.")
-            elif saldo_pendiente > 0:
+            if saldo_pendiente > 0.01: # 0.01 por tolerancia de flotantes
                 st.warning(f"⚠️ Faltan completar: **${saldo_pendiente:,.2f}**")
-            else:
+            elif saldo_pendiente < -0.01:
                 st.error(f"❌ Exceso de: **${abs(saldo_pendiente):,.2f}**")
+            else:
+                st.success("✅ Pago completo.")
 
             # Iteración para mostrar los inputs
             for i, p in enumerate(st.session_state.pagos_split):
-                col_p1, col_p2, col_p3, col_p4 = st.columns([2, 1, 0.5, 0.5])
+                col_p1, col_p2, col_p3 = st.columns([2, 1, 0.5])
                 
-                # 1. Selector de método
+                # Selector de método
                 st.session_state.pagos_split[i]["metodo"] = col_p1.selectbox(
                     f"Método {i+1}", lista_pagos, key=f"p_met_{i}"
                 )
                 
-                # 2. Monto: Sin 'key' para que no entre en conflicto
-                # Usamos un valor fijo basado estrictamente en el session_state
-                monto_actual = st.session_state.pagos_split[i]["monto"]
-
-                nuevo_monto = col_p2.number_input(
+                # Monto con callback inmediato
+                col_p2.number_input(
                     f"Monto {i+1}", 
                     min_value=0.0, 
-                    value=float(monto_actual), 
-                    format="%.2f"
+                    value=float(p["monto"]), 
+                    key=f"temp_mon_{i}", 
+                    on_change=actualizar_valor_pago, 
+                    args=(i,) # Le pasamos el índice a la función
                 )
-
-                # Actualizamos el estado inmediatamente si el usuario escribió algo
-                if nuevo_monto != monto_actual:
-                    st.session_state.pagos_split[i]["monto"] = nuevo_monto
-                    st.rerun()
-
-                # 3. Botón de Saldo (⚡)
-                if col_p4.button("⚡", key=f"btn_saldo_{i}"):
-                    otros_pagos = sum(float(pago["monto"]) for idx, pago in enumerate(st.session_state.pagos_split) if idx != i)
-                    saldo_faltante = max(0.0, total_final_vta - otros_pagos)
-                    
-                    # Actualizamos el estado
-                    st.session_state.pagos_split[i]["monto"] = float(saldo_faltante)
-                    
-                    # Forzamos el rerun, ahora el number_input leerá el nuevo valor 
-                    # desde el session_state porque ya no tiene una 'key' que lo bloquee
-                    st.rerun()
                 
-                # 4. Botón Eliminar
                 if col_p3.button("🗑️", key=f"del_p_{i}"):
                     st.session_state.pagos_split.pop(i)
                     st.rerun()
