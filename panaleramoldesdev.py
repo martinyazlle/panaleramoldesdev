@@ -418,7 +418,7 @@ else:
             opciones_disponibles.extend(["🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
         "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", "📈 Estadísticas"])
         elif st.session_state.rol == "Vendedor":
-            opciones_disponibles.extend(["🛒 Punto de Venta", "👥 Clientes"])
+            opciones_disponibles.extend(["🛒 Punto de Venta", "📦 Productos", "👥 Clientes"])
         
         menu = st.selectbox("Menú Principal", opciones_disponibles)
         
@@ -1198,189 +1198,199 @@ else:
     elif menu == "📦 Productos":
         st.title("📦 Gestión de Productos")
 
-        # Carga de proveedores para el selectbox
-        df_prov = pd.DataFrame(db.table("PROVEEDORES").select("Razon_Social").execute().data)
-        lista_proveedores = df_prov['Razon_Social'].tolist() if not df_prov.empty else ["Sin proveedores"]
-
-        # 1. CARGA SEGURA DE DATOS
+        # 1. CARGA INICIAL DE DATOS NECESARIOS (PARA TODOS)
         try:
             data = db.table("PRODUCTOS").select("*").execute().data
             df_prod = pd.DataFrame(data)
+            
+            # Carga de proveedores (ahora es global para el módulo)
+            df_prov = pd.DataFrame(db.table("PROVEEDORES").select("Razon_Social").execute().data)
+            lista_proveedores = df_prov['Razon_Social'].tolist() if not df_prov.empty else ["Sin proveedores"]
         except Exception as e:
             st.error(f"Error al conectar con Supabase: {e}")
             st.stop()
 
-        # Si el DF viene vacío, inicializamos con las columnas requeridas
+        # Inicialización de DF si está vacío
         columnas_requeridas = ['ID_Producto', 'Nombre', 'Rubro', 'ID_Proveedor', 'Marca', 
-                            'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Precio_Costo', 
-                            'Precio_1', 'Precio_2', 'Precio_3', 'Precio_4', 'Precio_5', 'Imagen']
-        
+                               'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Precio_Costo', 
+                               'Precio_1', 'Precio_2', 'Precio_3', 'Precio_4', 'Precio_5', 'Imagen']
         if df_prod.empty:
             df_prod = pd.DataFrame(columns=columnas_requeridas)
         
-        # Asegurar tipos
         st.session_state.df_prod = df_prod.copy()
-        for col in ['ID_Producto', 'Nombre', 'Marca', 'Rubro']:
-            if col in st.session_state.df_prod.columns:
-                st.session_state.df_prod[col] = st.session_state.df_prod[col].astype(str).fillna("")
 
-        # 2. INTERFAZ DE PESTAÑAS
-        tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar = st.tabs([
-            "🔍 Buscar y Ver Base", "➕ Alta de Producto", "✏️ Modificar Producto",
-            "🔄 Cambios / Devoluciones", "📥 Importación Masiva"
-        ])
+        # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
+        if st.session_state.rol == "Administrador":
+            nombres_tabs = ["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar"]
+            tabs = st.tabs(nombres_tabs)
+            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar = tabs
+        else:
+            nombres_tabs = ["🔍 Buscar"]
+            tabs = st.tabs(nombres_tabs)
+            tab_buscar = tabs[0]
+            tab_alta = tab_modificar = tab_cambios = tab_importar = None
 
-        # --- PESTAÑA BUSCAR ---
+        # --- PESTAÑA BUSCAR (VISIBLE PARA TODOS) ---
         with tab_buscar:
-            termino = st.text_input("Buscar producto:", key="busc_prod").lower()
-            df_v = st.session_state.df_prod
+            st.subheader("Buscador de Productos")
+            termino = st.text_input("Buscar producto por nombre o ID:", key="busc_prod").lower()
+            
+            if st.session_state.rol == "Administrador":
+                df_v = st.session_state.df_prod.copy()
+            else:
+                cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
+                df_v = st.session_state.df_prod[cols_vendedor].copy()
+
             if termino:
-                df_v = df_v[df_v['Nombre'].str.lower().str.contains(termino) | df_v['ID_Producto'].str.lower().str.contains(termino)]
+                mask = (st.session_state.df_prod['Nombre'].str.lower().str.contains(termino)) | \
+                       (st.session_state.df_prod['ID_Producto'].str.lower().str.contains(termino))
+                df_v = df_v[mask]
+                
             st.dataframe(df_v, use_container_width=True, hide_index=True)
 
-        # -----------------------------------------------------------------
-        # PESTAÑA: DAR DE ALTA NUEVOS PRODUCTOS (Adaptado a Supabase)
-        # -----------------------------------------------------------------
-        with tab_alta:
-            st.subheader("➕ Registrar Nuevo Artículo")
-            
-            with st.form("form_alta_producto_unico", clear_on_submit=True):
-                c_alta1, c_alta2 = st.columns(2)
+        # --- PESTAÑAS DE ADMINISTRADOR ---
+        if st.session_state.rol == "Administrador":
+            # --- PESTAÑA ALTA ---
+            with tab_alta:
+                st.subheader("➕ Registrar Nuevo Artículo")
                 
-                with c_alta1:
-                    id_nuevo = st.text_input("Código / ID Producto*", key="alta_id").strip()
-                    nombre_nuevo = st.text_input("Descripción / Nombre*", key="alta_nom").strip()
-                    marca_nueva = st.text_input("Marca", key="alta_marca").strip()
-                    rubro_nuevo = st.selectbox("Rubro", options=LISTA_RUBROS)
-                    prov_seleccionado = st.selectbox("Proveedor", options=lista_proveedores)
+                with st.form("form_alta_producto_unico", clear_on_submit=True):
+                    c_alta1, c_alta2 = st.columns(2)
                     
-                with c_alta2:
-                    stock_ini = st.number_input("Stock Inicial", min_value=0, value=0, step=1)
-                    costo_ini = st.number_input("Precio Costo ($)", min_value=0.0, value=0.0, step=10.0)
-                    p1 = st.number_input("Precio Lista 1 ($)*", min_value=0.0, value=0.0, step=10.0)
-                    p2 = st.number_input("Precio Lista 2 ($)", min_value=0.0, value=0.0, step=10.0)
-                    p3 = st.number_input("Precio Lista 3 ($)", min_value=0.0, value=0.0, step=10.0)
-                    p4 = st.number_input("Precio Lista 4 ($)", min_value=0.0, value=0.0, step=10.0)
-                    p5 = st.number_input("Precio Lista 5 ($)", min_value=0.0, value=0.0, step=10.0)
-
-                st.caption("* Campos obligatorios")
-                btn_guardar = st.form_submit_button("💾 Guardar Producto en Base de Datos")
-
-            if btn_guardar:
-                if not id_nuevo or not nombre_nuevo or p1 <= 0:
-                    st.error("Por favor, completa los campos obligatorios (ID, Nombre y Precio 1 > 0).")
-                else:
-                    # Nos aseguramos de que no envíe strings vacíos a columnas numéricas
-                    nuevo_prod = {
-                        "ID_Producto": id_nuevo,
-                        "Nombre": nombre_nuevo,
-                        "Rubro": rubro_nuevo if rubro_nuevo != "" else None,
-                        "Marca": marca_nueva if marca_nueva != "" else None,
-                        "Stock_Actual": int(stock_ini),
-                        "Precio_Costo": float(costo_ini),
-                        "Precio_1": float(p1),
-                        "Precio_2": float(p2),
-                        "Precio_3": float(p3),
-                        "Precio_4": float(p4),
-                        "Precio_5": float(p5),
-                        "ID_Proveedor": None, # Cambiado a None (null)
-                        "Stock_Min": 0,       # Aseguramos entero 0
-                        "Stock_Max": 0,       # Aseguramos entero 0
-                        "Imagen": None        # Cambiado a None (null)
-                    }
-                    
-                    try:
-                        db.table("PRODUCTOS").insert(nuevo_prod).execute()
-                        st.success(f"🎉 ¡Producto '{nombre_nuevo}' guardado!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error técnico: {e}")
-
-        # --- PESTAÑA MODIFICAR ---
-        with tab_modificar:
-            st.subheader("✏️ Modificar Producto Completo")
-            
-            if not st.session_state.df_prod.empty:
-                opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
-                prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
-                
-                def asegurar_float(valor):
-                    try:
-                        return float(valor) if valor not in [None, ''] else 0.0
-                    except:
-                        return 0.0
-
-                if prod_sel:
-                    id_sel = prod_sel.split(" - ")[0]
-                    fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
-                    
-                    with st.form("form_mod_completo"):
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            n_nom = st.text_input("Nombre", value=str(fila.get('Nombre', '')))
-                            idx_rubro = LISTA_RUBROS.index(fila.get('Rubro')) if fila.get('Rubro') in LISTA_RUBROS else 0
-                            n_rub = st.selectbox("Rubro", options=LISTA_RUBROS, index=idx_rubro)
-                            n_mar = st.text_input("Marca", value=str(fila.get('Marca', '')))
-                            prov_actual = fila.get('ID_Proveedor', "")
-                            idx_prov = lista_proveedores.index(prov_actual) if prov_actual in lista_proveedores else 0
-                            n_prov = st.selectbox("Proveedor", options=lista_proveedores, index=idx_prov)
-                        with c2:
-                            n_stk = st.number_input("Stock Actual", value=int(asegurar_float(fila.get('Stock_Actual', 0))))
-                            n_min = st.number_input("Stock Min", value=int(asegurar_float(fila.get('Stock_Min', 0))))
-                            n_max = st.number_input("Stock Max", value=int(asegurar_float(fila.get('Stock_Max', 0))))
-                            n_img = st.text_input("URL Imagen", value=str(fila.get('Imagen', '')))
-                        with c3:
-                            n_cos = st.number_input("Costo", value=asegurar_float(fila.get('Precio_Costo', 0)), format="%.2f")
-                            n_p1 = st.number_input("Precio 1", value=asegurar_float(fila.get('Precio_1', 0)), format="%.2f")
-                            n_p2 = st.number_input("Precio 2", value=asegurar_float(fila.get('Precio_2', 0)), format="%.2f")
-                            n_p3 = st.number_input("Precio 3", value=asegurar_float(fila.get('Precio_3', 0)), format="%.2f")
-                            n_p4 = st.number_input("Precio 4", value=asegurar_float(fila.get('Precio_4', 0)), format="%.2f")
-                            n_p5 = st.number_input("Precio 5", value=asegurar_float(fila.get('Precio_5', 0)), format="%.2f")
+                    with c_alta1:
+                        id_nuevo = st.text_input("Código / ID Producto*", key="alta_id").strip()
+                        nombre_nuevo = st.text_input("Descripción / Nombre*", key="alta_nom").strip()
+                        marca_nueva = st.text_input("Marca", key="alta_marca").strip()
+                        rubro_nuevo = st.selectbox("Rubro", options=LISTA_RUBROS)
+                        prov_seleccionado = st.selectbox("Proveedor", options=lista_proveedores)
                         
-                        if st.form_submit_button("✅ Guardar Todos los Cambios"):
-                            # Función para limpiar campos de texto: si es "None" o vacío, devuelve None (nulo)
-                            def clean_text(val):
-                                if val is None or val == "" or str(val).lower() == "none":
-                                    return None
-                                return str(val)
+                    with c_alta2:
+                        stock_ini = st.number_input("Stock Inicial", min_value=0, value=0, step=1)
+                        costo_ini = st.number_input("Precio Costo ($)", min_value=0.0, value=0.0, step=10.0)
+                        p1 = st.number_input("Precio Lista 1 ($)*", min_value=0.0, value=0.0, step=10.0)
+                        p2 = st.number_input("Precio Lista 2 ($)", min_value=0.0, value=0.0, step=10.0)
+                        p3 = st.number_input("Precio Lista 3 ($)", min_value=0.0, value=0.0, step=10.0)
+                        p4 = st.number_input("Precio Lista 4 ($)", min_value=0.0, value=0.0, step=10.0)
+                        p5 = st.number_input("Precio Lista 5 ($)", min_value=0.0, value=0.0, step=10.0)
 
-                            # Función para asegurar número
-                            def clean_num(val, is_float=False):
-                                try:
-                                    if val in [None, '', 'None']: return 0.0 if is_float else 0
-                                    return float(val) if is_float else int(val)
-                                except:
-                                    return 0.0 if is_float else 0
+                    st.caption("* Campos obligatorios")
+                    btn_guardar = st.form_submit_button("💾 Guardar Producto en Base de Datos")
 
-                            # Diccionario corregido
-                            datos_update = {
-                                "Nombre": str(n_nom) if n_nom else "Sin nombre",
-                                "Rubro": clean_text(n_rub),
-                                "Marca": clean_text(n_mar),
-                                "ID_Proveedor": clean_num(n_prov), # Lo pasamos por clean_num porque es bigint
-                                "Stock_Actual": clean_num(n_stk),
-                                "Stock_Min": clean_num(n_min),
-                                "Stock_Max": clean_num(n_max),
-                                "Imagen": clean_text(n_img),
-                                "Precio_Costo": clean_num(n_cos, True),
-                                "Precio_1": clean_num(n_p1, True),
-                                "Precio_2": clean_num(n_p2, True),
-                                "Precio_3": clean_num(n_p3, True),
-                                "Precio_4": clean_num(n_p4, True),
-                                "Precio_5": clean_num(n_p5, True)
-                            }
+                if btn_guardar:
+                    if not id_nuevo or not nombre_nuevo or p1 <= 0:
+                        st.error("Por favor, completa los campos obligatorios (ID, Nombre y Precio 1 > 0).")
+                    else:
+                        # Nos aseguramos de que no envíe strings vacíos a columnas numéricas
+                        nuevo_prod = {
+                            "ID_Producto": id_nuevo,
+                            "Nombre": nombre_nuevo,
+                            "Rubro": rubro_nuevo if rubro_nuevo != "" else None,
+                            "Marca": marca_nueva if marca_nueva != "" else None,
+                            "Stock_Actual": int(stock_ini),
+                            "Precio_Costo": float(costo_ini),
+                            "Precio_1": float(p1),
+                            "Precio_2": float(p2),
+                            "Precio_3": float(p3),
+                            "Precio_4": float(p4),
+                            "Precio_5": float(p5),
+                            "ID_Proveedor": None, # Cambiado a None (null)
+                            "Stock_Min": 0,       # Aseguramos entero 0
+                            "Stock_Max": 0,       # Aseguramos entero 0
+                            "Imagen": None        # Cambiado a None (null)
+                        }
+                        
+                        try:
+                            db.table("PRODUCTOS").insert(nuevo_prod).execute()
+                            st.success(f"🎉 ¡Producto '{nombre_nuevo}' guardado!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error técnico: {e}")
+
+            # --- PESTAÑA MODIFICAR ---
+            with tab_modificar:
+                st.subheader("✏️ Modificar Producto Completo")
+                
+                if not st.session_state.df_prod.empty:
+                    opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
+                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
+                    
+                    def asegurar_float(valor):
+                        try:
+                            return float(valor) if valor not in [None, ''] else 0.0
+                        except:
+                            return 0.0
+
+                    if prod_sel:
+                        id_sel = prod_sel.split(" - ")[0]
+                        fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
+                        
+                        with st.form("form_mod_completo"):
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                n_nom = st.text_input("Nombre", value=str(fila.get('Nombre', '')))
+                                idx_rubro = LISTA_RUBROS.index(fila.get('Rubro')) if fila.get('Rubro') in LISTA_RUBROS else 0
+                                n_rub = st.selectbox("Rubro", options=LISTA_RUBROS, index=idx_rubro)
+                                n_mar = st.text_input("Marca", value=str(fila.get('Marca', '')))
+                                prov_actual = fila.get('ID_Proveedor', "")
+                                idx_prov = lista_proveedores.index(prov_actual) if prov_actual in lista_proveedores else 0
+                                n_prov = st.selectbox("Proveedor", options=lista_proveedores, index=idx_prov)
+                            with c2:
+                                n_stk = st.number_input("Stock Actual", value=int(asegurar_float(fila.get('Stock_Actual', 0))))
+                                n_min = st.number_input("Stock Min", value=int(asegurar_float(fila.get('Stock_Min', 0))))
+                                n_max = st.number_input("Stock Max", value=int(asegurar_float(fila.get('Stock_Max', 0))))
+                                n_img = st.text_input("URL Imagen", value=str(fila.get('Imagen', '')))
+                            with c3:
+                                n_cos = st.number_input("Costo", value=asegurar_float(fila.get('Precio_Costo', 0)), format="%.2f")
+                                n_p1 = st.number_input("Precio 1", value=asegurar_float(fila.get('Precio_1', 0)), format="%.2f")
+                                n_p2 = st.number_input("Precio 2", value=asegurar_float(fila.get('Precio_2', 0)), format="%.2f")
+                                n_p3 = st.number_input("Precio 3", value=asegurar_float(fila.get('Precio_3', 0)), format="%.2f")
+                                n_p4 = st.number_input("Precio 4", value=asegurar_float(fila.get('Precio_4', 0)), format="%.2f")
+                                n_p5 = st.number_input("Precio 5", value=asegurar_float(fila.get('Precio_5', 0)), format="%.2f")
                             
-                            try:
-                                # Ejecutamos el update
-                                db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
-                                st.success("¡Producto actualizado exitosamente!")
-                                if 'df_prod' in st.session_state: del st.session_state['df_prod']
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error al actualizar en Supabase: {e}")
-                                st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
-            else:
-                st.info("No hay productos para modificar.")
+                            if st.form_submit_button("✅ Guardar Todos los Cambios"):
+                                # Función para limpiar campos de texto: si es "None" o vacío, devuelve None (nulo)
+                                def clean_text(val):
+                                    if val is None or val == "" or str(val).lower() == "none":
+                                        return None
+                                    return str(val)
+
+                                # Función para asegurar número
+                                def clean_num(val, is_float=False):
+                                    try:
+                                        if val in [None, '', 'None']: return 0.0 if is_float else 0
+                                        return float(val) if is_float else int(val)
+                                    except:
+                                        return 0.0 if is_float else 0
+
+                                # Diccionario corregido
+                                datos_update = {
+                                    "Nombre": str(n_nom) if n_nom else "Sin nombre",
+                                    "Rubro": clean_text(n_rub),
+                                    "Marca": clean_text(n_mar),
+                                    "ID_Proveedor": clean_num(n_prov), # Lo pasamos por clean_num porque es bigint
+                                    "Stock_Actual": clean_num(n_stk),
+                                    "Stock_Min": clean_num(n_min),
+                                    "Stock_Max": clean_num(n_max),
+                                    "Imagen": clean_text(n_img),
+                                    "Precio_Costo": clean_num(n_cos, True),
+                                    "Precio_1": clean_num(n_p1, True),
+                                    "Precio_2": clean_num(n_p2, True),
+                                    "Precio_3": clean_num(n_p3, True),
+                                    "Precio_4": clean_num(n_p4, True),
+                                    "Precio_5": clean_num(n_p5, True)
+                                }
+                                
+                                try:
+                                    # Ejecutamos el update
+                                    db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
+                                    st.success("¡Producto actualizado exitosamente!")
+                                    if 'df_prod' in st.session_state: del st.session_state['df_prod']
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al actualizar en Supabase: {e}")
+                                    st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
+                else:
+                    st.info("No hay productos para modificar.")
 
             # --- PESTAÑA CAMBIOS ---
             with tab_cambios:
@@ -1445,7 +1455,7 @@ else:
                         except Exception as e:
                             st.error(f"Error al registrar el movimiento: {e}")
 
-                    # --- PESTAÑA IMPORTAR (Versión Optimizada) ---
+            # --- PESTAÑA IMPORTAR (Versión Optimizada) ---
             with tab_importar:
                 st.subheader("📥 Importación Masiva de Productos")
                 st.markdown("Subí un archivo CSV (UTF-8 o Latin-1) o Excel.")
