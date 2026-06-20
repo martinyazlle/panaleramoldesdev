@@ -390,6 +390,50 @@ else:
         st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
         st.rerun()
 
+    def mostrar_reporte_utilidad():
+        st.subheader("📈 Reporte de Rentabilidad Detallado")
+        
+        # 1. Traer datos
+        # Necesitamos la fecha de la venta, así que traemos VENTAS_CABECERA también
+        ventas_det = db.table("VENTAS_DETALLE").select("ID_Venta, ID_Producto, Cantidad, Precio_Unitario, Precio_Costo_Unitario").execute().data
+        ventas_cab = db.table("VENTAS_CABECERA").select("ID_Venta, Fecha").execute().data
+        prods = db.table("PRODUCTOS").select("ID_Producto, Nombre, Rubro, Marca").execute().data
+        
+        df_vd = pd.DataFrame(ventas_det)
+        df_vc = pd.DataFrame(ventas_cab)
+        df_p = pd.DataFrame(prods)
+        
+        # Unir datos
+        df = df_vd.merge(df_vc, on="ID_Venta").merge(df_p, on="ID_Producto")
+        df['Fecha'] = pd.to_datetime(df['Fecha'])
+        df['Utilidad_Bruta'] = df['Cantidad'] * (df['Precio_Unitario'] - df['Precio_Costo_Unitario'])
+        
+        # 2. FILTROS EN LA BARRA LATERAL O SUPERIOR
+        st.write("---")
+        c1, c2 = st.columns(2)
+        
+        # Filtro Fecha
+        fecha_inicio = c1.date_input("Desde", df['Fecha'].min())
+        fecha_fin = c2.date_input("Hasta", df['Fecha'].max())
+        
+        # Filtros multiselección
+        rubros = st.multiselect("Filtrar por Rubro", df['Rubro'].unique())
+        marcas = st.multiselect("Filtrar por Marca", df['Marca'].unique())
+        nombres = st.multiselect("Filtrar por Producto", df['Nombre'].unique())
+        
+        # Aplicar filtros
+        mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
+        if rubros: mask &= df['Rubro'].isin(rubros)
+        if marcas: mask &= df['Marca'].isin(marcas)
+        if nombres: mask &= df['Nombre'].isin(nombres)
+        
+        df_filtrado = df[mask]
+        
+        # 3. Visualización
+        st.metric("💰 Utilidad Total Filtrada", f"${df_filtrado['Utilidad_Bruta'].sum():,.2f}")
+        
+        st.dataframe(df_filtrado[['Fecha', 'Nombre', 'Rubro', 'Marca', 'Cantidad', 'Utilidad_Bruta']])
+
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
 
@@ -415,8 +459,13 @@ else:
         opciones_disponibles = ["💰 Caja"]
         
         if st.session_state.rol == "Administrador":
-            opciones_disponibles.extend(["🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
-        "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", "📈 Estadísticas"])
+            # Agregamos "📈 Reporte de Utilidades" a la lista
+            opciones_disponibles.extend([
+                "🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", 
+                "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
+                "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", 
+                "📈 Estadísticas", "📈 Reporte de Utilidades" # <--- AQUÍ LO AGREGAMOS
+            ])
         elif st.session_state.rol == "Vendedor":
             opciones_disponibles.extend(["🛒 Punto de Venta", "📦 Productos", "👥 Clientes"])
         
@@ -957,14 +1006,21 @@ else:
                             "Direccion_Entrega": st.session_state.direccion_entrega if st.session_state.tipo_entrega == "Reparto" else "N/A"
                         }).execute()
                         
-                        # 3. Registrar Detalle y Actualizar Stock
                         for art in st.session_state.carrito_vta:
+                            # 1. CONSULTA EL COSTO ACTUAL DEL PRODUCTO
+                            prod_data = db.table("PRODUCTOS").select("Precio_Costo").eq("ID_Producto", str(art['id'])).single().execute()
+                            
+                            # 2. DEFINIMOS EL COSTO (si no encuentra el producto, usamos 0 por seguridad)
+                            costo_historico = prod_data.data.get('Precio_Costo', 0) if prod_data.data else 0
+
+                            # 3. INSERTAMOS EN VENTAS_DETALLE INCLUYENDO EL COSTO CAPTURADO
                             db.table("VENTAS_DETALLE").insert({
                                 "ID_Venta": id_v,
-                                "ID_Producto": art['id'],
-                                "Cantidad": art['cantidad'],
-                                "Precio_Unitario": art['precio'],
-                                "Subtotal": art['subtotal']
+                                "ID_Producto": str(art['id']),
+                                "Cantidad": int(art['cantidad']),
+                                "Precio_Unitario": float(art['precio']),
+                                "Precio_Costo_Unitario": float(costo_historico), # <--- AQUÍ ESTÁ LA MAGIA
+                                "Subtotal": float(art['subtotal'])
                             }).execute()
                             
                             prod_res = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", art['id']).single().execute()
@@ -2222,4 +2278,10 @@ else:
                             }).execute()
                         st.success("✅ Registro realizado.")
                         st.rerun()
+
+    # =====================================================================
+    # MODULO: 📈 REPORTE DE UTILIDADES
+    # =====================================================================
+    elif menu == "📈 Reporte de Utilidades":
+        mostrar_reporte_utilidad()
 
