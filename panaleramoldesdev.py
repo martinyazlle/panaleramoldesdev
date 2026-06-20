@@ -374,6 +374,22 @@ else:
             
         return True
 
+    def resetear_punto_venta():
+        # Lista de claves que queremos limpiar
+        keys_a_limpiar = [
+            'carrito_vta', 'pagos_split', 'id_cliente_recuperado', 
+            'tipo_entrega', 'direccion_entrega', 'link_maps_entrega', 
+            'fecha_reparto', 'id_pendiente_cargado', 'prod_manual_key'
+        ]
+        for key in keys_a_limpiar:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        # Opcional: recargar estados por defecto necesarios
+        st.session_state.carrito_vta = []
+        st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
+        st.rerun()
+
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
 
@@ -427,32 +443,34 @@ else:
             st.error(f"Error al conectar con Supabase: {e}")
             st.stop()
 
-        # 2. DEFINIR PESTAÑAS SEGÚN ROL
+        # 2. DEFINIR PESTAÑAS DINÁMICAS SEGÚN ROL
         if st.session_state.rol == "Administrador":
-            tabs = st.tabs(["🔍 Explorador", "➕ Nuevo Cliente", "✏️ Modificar"])
+            nombres_tabs = ["🔍 Explorador", "➕ Nuevo Cliente", "✏️ Modificar"]
+        else:
+            # El Vendedor solo ve estas dos
+            nombres_tabs = ["➕ Nuevo Cliente", "✏️ Modificar"]
+
+        # Creamos las pestañas en una sola llamada
+        tabs = st.tabs(nombres_tabs)
+
+        # 3. ASIGNAR PESTAÑAS SEGÚN ROL
+        if st.session_state.rol == "Administrador":
             tab_explorador, tab_nuevo, tab_modificar = tabs
         else:
-            # VENDEDOR: Solo muestra "Nuevo Cliente"
-            # Creamos una lista de 1 sola pestaña
-            tab_nuevo = st.tabs(["➕ Nuevo Cliente"])[0]
             tab_explorador = None
-            tab_modificar = None
+            tab_nuevo, tab_modificar = tabs
 
-        # 3. CONTENIDO SEGÚN ROL
+        # 4. CONTENIDO (Solo se ejecuta si la pestaña existe)
         
-        # Explorador (Solo Admin)
-        if tab_explorador is not None:
+        if tab_explorador:
             with tab_explorador:
                 st.subheader("Buscador de Clientes")
                 query = st.text_input("Buscar por nombre, apellido, DNI, CUIT, teléfono o dirección...")
-                
                 if query:
                     mask = (df_clientes.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1))
-                    df_filtrado = df_clientes[mask]
+                    st.dataframe(df_clientes[mask], use_container_width=True)
                 else:
-                    df_filtrado = df_clientes
-                    
-                st.dataframe(df_filtrado, use_container_width=True)
+                    st.dataframe(df_clientes, use_container_width=True)
             
         with tab_nuevo:
             with st.form("form_nuevo_cliente"):
@@ -496,7 +514,7 @@ else:
             with tab_modificar:
                 st.subheader("Modificar Cliente Existente")
 
-                # 1. Selector de Cliente
+                # 1. Selector de Cliente (fuera del form)
                 lista_clientes = df_clientes['Nombre'].astype(str) + " " + \
                                 df_clientes['Apellido'].astype(str) + " (ID: " + \
                                 df_clientes['ID_Cliente'].astype(str) + ")"
@@ -507,8 +525,7 @@ else:
                     id_modificar = cliente_seleccionado.split("(ID: ")[1].replace(")", "")
                     fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
 
-                    confirmar_eliminar = st.checkbox("Confirmar eliminación", key="confirmar_eliminar")
-
+                    # 2. Formulario de Modificación
                     with st.form("form_modificar_cliente"):
                         c1, c2 = st.columns(2)
                         with c1:
@@ -518,6 +535,7 @@ else:
                             nueva_razon = st.text_input("Razón Social", value=fila.get('Razón Social', ''))
                             nuevo_cuit = st.text_input("CUIT", value=fila.get('CUIT', ''))
                             nuevo_telefono = st.text_input("Teléfono", value=fila.get('Telefono', ''), max_chars=10)
+                        
                         with c2:
                             nuevo_dir1 = st.text_input("Dirección 1", value=fila.get('Direccion_1', ''))
                             nuevo_link1 = st.text_input("Link Dirección 1", value=fila.get('Link_Direccion_1', ''))
@@ -528,57 +546,53 @@ else:
                         
                         nueva_obs = st.text_area("Observaciones", value=fila.get('Observaciones', ''))
                         
+                        # Definimos los inputs de selección DENTRO del form
                         zonas_lista = ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"]
-                        val_zona = fila.get('Zona')
-                        idx_zona = zonas_lista.index(val_zona) if val_zona in zonas_lista else 0
-                        nueva_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
+                        idx_zona = zonas_lista.index(fila.get('Zona')) if fila.get('Zona') in zonas_lista else 0
+                        input_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
                         
                         tipos_lista = ["CONSUMIDOR FINAL", "MAYORISTA"]
-                        val_tipo = fila.get('Tipo_Cliente')
-                        idx_tipo = 0 if val_tipo == "CONSUMIDOR FINAL" else 1
-                        nuevo_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
+                        idx_tipo = 0 if fila.get('Tipo_Cliente') == "CONSUMIDOR FINAL" else 1
+                        input_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
                         
-                        col_g, col_e = st.columns(2)
-                        guardar_btn = col_g.form_submit_button("Guardar Cambios")
-                        eliminar_btn = col_e.form_submit_button("🗑️ Eliminar Cliente", type="primary")
+                        # --- Botón de guardar ---
+                        guardar_btn = st.form_submit_button("Guardar Cambios")
 
-                    # 2. Lógica de Guardado
+                    # 3. ZONA DE ACCIONES (Fuera del formulario)
+                    col_g, col_e = st.columns(2)
+                    
+                    if st.session_state.rol == "Administrador":
+                        confirmar_eliminar = col_e.checkbox("Confirmar eliminación", key="confirmar_eliminar")
+                        eliminar_btn = col_e.button("🗑️ Eliminar Cliente", type="primary")
+                    else:
+                        col_e.button("🗑️ Eliminar Cliente", disabled=True)
+                        eliminar_btn = False
+
+                    # 4. Lógica de Guardado (Usamos input_zona e input_tipo)
                     if guardar_btn:
-                        otros_clientes = df_clientes[df_clientes['ID_Cliente'].astype(str) != id_modificar]
-                        if nuevo_telefono != "" and nuevo_telefono in otros_clientes['Telefono'].astype(str).values:
-                            st.error(f"⚠️ Ya existe otro cliente con el teléfono {nuevo_telefono}!")
-                        elif nuevo_telefono != "" and (not nuevo_telefono.isdigit() or len(nuevo_telefono) != 10):
-                            st.error("El teléfono debe tener 10 dígitos numéricos.")
-                        else:
-                            db.table("CLIENTES").update({
-                                "Nombre": nuevo_nombre.upper(),
-                                "Apellido": nuevo_apellido.upper() if nuevo_apellido else None,
-                                "DNI": nuevo_dni if nuevo_dni else None,
-                                "Razón Social": nueva_razon if nueva_razon else None,
-                                "CUIT": nuevo_cuit if nuevo_cuit else None,
-                                "Telefono": nuevo_telefono if nuevo_telefono else None,
-                                "Direccion_1": nuevo_dir1.upper() if nuevo_dir1 else None,
-                                "Link_Direccion_1": nuevo_link1 if nuevo_link1 else None,
-                                "Direccion_2": nuevo_dir2.upper() if nuevo_dir2 else None,
-                                "Link_Direccion_2": nuevo_link2 if nuevo_link2 else None,
-                                "Direccion_3": nuevo_dir3.upper() if nuevo_dir3 else None,
-                                "Link_Direccion_3": nuevo_link3 if nuevo_link3 else None,
-                                "Zona": nueva_zona,
-                                "Tipo_Cliente": nuevo_tipo,
-                                "Observaciones": nueva_obs if nueva_obs else None
-                            }).eq("ID_Cliente", int(id_modificar)).execute()
-                            st.success("✅ Cliente actualizado!")
-                            st.rerun()
+                        db.table("CLIENTES").update({
+                            "Nombre": nuevo_nombre.upper(),
+                            "Apellido": nuevo_apellido.upper() if nuevo_apellido else None,
+                            "DNI": nuevo_dni,
+                            "Razón Social": nueva_razon,
+                            "CUIT": nuevo_cuit,
+                            "Telefono": nuevo_telefono,
+                            "Direccion_1": nuevo_dir1.upper(),
+                            "Direccion_2": nuevo_dir2.upper(),
+                            "Direccion_3": nuevo_dir3.upper(),
+                            "Zona": input_zona,      # <--- Usamos la variable del form
+                            "Tipo_Cliente": input_tipo, # <--- Usamos la variable del form
+                            "Observaciones": nueva_obs
+                        }).eq("ID_Cliente", int(id_modificar)).execute()
+                        st.success("✅ Cliente actualizado!")
+                        st.rerun()
 
-                    # 3. Lógica de Eliminación
-                    if eliminar_btn:
+                    # 5. Lógica de Eliminación
+                    if eliminar_btn and st.session_state.rol == "Administrador":
                         if confirmar_eliminar:
-                            try:
-                                db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
-                                st.success("🗑️ Cliente eliminado correctamente!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"No se pudo eliminar: {e}. (Probablemente el cliente tiene ventas asociadas).")
+                            db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
+                            st.success("🗑️ Cliente eliminado!")
+                            st.rerun()
                         else:
                             st.warning("⚠️ Debes marcar 'Confirmar eliminación' para borrar.")
 
@@ -586,7 +600,10 @@ else:
     # MODULO: 🛒 PUNTO DE VENTA
     # =====================================================================
     if menu == "🛒 Punto de Venta":
-        st.header("🚀 Venta Rápida - Pañalera Moldes")
+        col_t1, col_t2 = st.columns([4, 1])
+        col_t1.header("🚀 Venta Rápida - Pañalera Moldes")
+        if col_t2.button("🧹 Limpiar Todo", type="secondary", use_container_width=True):
+            resetear_punto_venta()
         # 1.5. BOTÓN PARA VER PENDIENTES (Adaptado a Supabase)
         @st.dialog("Ventas Pendientes")
         def abrir_pendientes():
@@ -735,118 +752,123 @@ else:
             if prod_buscado['Stock_Actual'] <= 0 and prod_buscado['Es_Stockeable'] == True:
                 st.warning(f"⚠️ El producto '{prod_buscado['Nombre']}' no se puede agregar porque no cuenta con stock.")
 
-        # 4. CARRITO (Versión Corregida)
+        # 4. CARRITO (Sección Corregida)
         if st.session_state.carrito_vta:
             st.write("### 🛒 Detalle de la Venta")
             
-            global_val = st.session_state.lista_global_vta
-            
+            # Función para recalcular y actualizar el estado
+            def update_cart_item(i):
+                # Se ejecuta automáticamente al cambiar cantidad, precio o lista
+                pass 
+
             for i, item in enumerate(st.session_state.carrito_vta):
                 res_p = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
                 if res_p.empty: continue
                 p_data = res_p.iloc[0]
                 
+                # Usamos columnas
                 c1, c2, c3, c4, c5, c6 = st.columns([2, 1.2, 0.8, 1.2, 1, 0.5])
                 c1.write(f"**{p_data['Nombre']}**")
                 
                 # 1. Selector de Lista
-                lista_actual_producto = item.get('lista_local', global_val)
-                lista_item = c2.selectbox(
-                    "Lista", 
-                    ["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"],
-                    index=["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"].index(lista_actual_producto),
-                    key=f"L_{i}_{global_val}" 
-                )
+                lista_opciones = ["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"]
+                current_list = item.get('lista_local', st.session_state.get("selector_global", "Lista 1"))
                 
-                if lista_item != lista_actual_producto:
-                    item['lista_local'] = lista_item
-                    st.rerun()
+                # Guardamos la elección directamente en el objeto del carrito
+                item['lista_local'] = c2.selectbox("Lista", lista_opciones, 
+                                                index=lista_opciones.index(current_list), 
+                                                key=f"L_{i}")
                 
                 # 2. Cantidad
-                n_cant = c3.number_input("Cant.", min_value=1, value=int(item['cantidad']), key=f"Q_{i}")
+                item['cantidad'] = c3.number_input("Cant.", min_value=1, value=int(item['cantidad']), key=f"Q_{i}")
                 
-                # 3. Calcular el precio SUGERIDO (ANTES de usarlo en el input)
-                if lista_item == "Automática (P1/P2)":
-                    if n_cant == 1: col_p = 'Precio_1'
-                    elif n_cant == 2: col_p = 'Precio_2'
-                    else: col_p = 'Precio_3'
+                # Cálculo de precio sugerido
+                lista_usada = item['lista_local']
+                n_cant = item['cantidad']
+                
+                if lista_usada == "Automática (P1/P2)":
+                    col_p = 'Precio_1' if n_cant == 1 else ('Precio_2' if n_cant == 2 else 'Precio_3')
                 else:
-                    col_p = lista_item.replace("Lista ", "Precio_")
+                    col_p = lista_usada.replace("Lista ", "Precio_")
                 
-                precio_sugerido = float(p_data[col_p])
+                precio_sugerido = float(p_data.get(col_p, 0))
                 
-                # 4. Input Precio (El error de NameError ya no debería ocurrir)
-                n_prec = c4.number_input(
-                    "Precio", 
-                    value=precio_sugerido, 
-                    key=f"P_{i}_{lista_item}_{n_cant}_{precio_sugerido}", 
-                    format="%.2f"
-                )
+                # 3. Input Precio
+                item['precio'] = c4.number_input("Precio", value=float(item.get('precio', precio_sugerido)), 
+                                                key=f"P_{i}", format="%.2f")
                 
-                # 5. Actualización
-                sub = n_cant * n_prec
-                st.session_state.carrito_vta[i].update({
-                    'cantidad': n_cant,
-                    'precio': n_prec,
-                    'subtotal': sub
-                })
+                # 4. Cálculo Subtotal (Se calcula aquí, sin guardar en DB aún)
+                item['subtotal'] = item['cantidad'] * item['precio']
+                c5.write(f"Sub: **${item['subtotal']:,.2f}**")
                 
-                c5.write(f"Sub: **${sub:,.2f}**")
+                # 5. Botón eliminar
                 if c6.button("🗑️", key=f"del_{i}"):
                     st.session_state.carrito_vta.pop(i)
-                    st.rerun()
+                    st.rerun() # Solo aquí es necesario el rerun
 
-        # TOTAL (Al final del carrito)
-            total_final_vta = sum(art['subtotal'] for art in st.session_state.carrito_vta)
+            # TOTAL (Al final del carrito)
+            total_final_vta = sum(float(art['subtotal']) for art in st.session_state.carrito_vta)
             st.divider()
             st.markdown(f"### 💰 **Total a Cobrar: ${total_final_vta:,.2f}**")
 
-            # --- SECCIÓN DE PAGOS ---
+            # --- SECCIÓN DE PAGOS CORREGIDA ---
             st.subheader("💳 Formas de Pago")
-            
+
             metodos_db = db.table("FORMAS_PAGO").select("Nombre_Pago").eq("Activo", True).execute()
             lista_pagos = [item['Nombre_Pago'] for item in metodos_db.data] if metodos_db.data else ["Efectivo"]
-                
+
             if 'pagos_split' not in st.session_state:
                 st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
 
-            # Esta función se ejecuta apenas el usuario cambia el número y presiona TAB
-            def actualizar_valor_pago(indice):
-                # El valor nuevo ya está en st.session_state porque la key del input 
-                # coincide con el nombre de la variable
-                valor_nuevo = st.session_state[f"temp_mon_{indice}"]
-                st.session_state.pagos_split[indice]["monto"] = float(valor_nuevo)
-
-            # --- CALCULADOR DE SALDO (Se recalcula al inicio de cada rerun) ---
+            # Calculador de saldo
             suma_pagos_actual = sum(float(p["monto"]) for p in st.session_state.pagos_split)
             saldo_pendiente = total_final_vta - suma_pagos_actual
 
-            if saldo_pendiente > 0.01: # 0.01 por tolerancia de flotantes
-                st.warning(f"⚠️ Faltan completar: **${saldo_pendiente:,.2f}**")
-            elif saldo_pendiente < -0.01:
-                st.error(f"❌ Exceso de: **${abs(saldo_pendiente):,.2f}**")
-            else:
+            if abs(saldo_pendiente) < 0.01:
                 st.success("✅ Pago completo.")
+            elif saldo_pendiente > 0:
+                st.warning(f"⚠️ Faltan completar: **${saldo_pendiente:,.2f}**")
+            else:
+                st.error(f"❌ Exceso de: **${abs(saldo_pendiente):,.2f}**")
 
             # Iteración para mostrar los inputs
             for i, p in enumerate(st.session_state.pagos_split):
-                col_p1, col_p2, col_p3 = st.columns([2, 1, 0.5])
+                col_p1, col_p2, col_p3, col_p4 = st.columns([2, 1, 0.5, 0.5])
                 
-                # Selector de método
+                # 1. Selector de método
                 st.session_state.pagos_split[i]["metodo"] = col_p1.selectbox(
                     f"Método {i+1}", lista_pagos, key=f"p_met_{i}"
                 )
                 
-                # Monto con callback inmediato
-                col_p2.number_input(
+                # 2. Monto: Sin 'key' para que no entre en conflicto
+                # Usamos un valor fijo basado estrictamente en el session_state
+                monto_actual = st.session_state.pagos_split[i]["monto"]
+
+                nuevo_monto = col_p2.number_input(
                     f"Monto {i+1}", 
                     min_value=0.0, 
-                    value=float(p["monto"]), 
-                    key=f"temp_mon_{i}", 
-                    on_change=actualizar_valor_pago, 
-                    args=(i,) # Le pasamos el índice a la función
+                    value=float(monto_actual), 
+                    format="%.2f"
                 )
+
+                # Actualizamos el estado inmediatamente si el usuario escribió algo
+                if nuevo_monto != monto_actual:
+                    st.session_state.pagos_split[i]["monto"] = nuevo_monto
+                    st.rerun()
+
+                # 3. Botón de Saldo (⚡)
+                if col_p4.button("⚡", key=f"btn_saldo_{i}"):
+                    otros_pagos = sum(float(pago["monto"]) for idx, pago in enumerate(st.session_state.pagos_split) if idx != i)
+                    saldo_faltante = max(0.0, total_final_vta - otros_pagos)
+                    
+                    # Actualizamos el estado
+                    st.session_state.pagos_split[i]["monto"] = float(saldo_faltante)
+                    
+                    # Forzamos el rerun, ahora el number_input leerá el nuevo valor 
+                    # desde el session_state porque ya no tiene una 'key' que lo bloquee
+                    st.rerun()
                 
+                # 4. Botón Eliminar
                 if col_p3.button("🗑️", key=f"del_p_{i}"):
                     st.session_state.pagos_split.pop(i)
                     st.rerun()
