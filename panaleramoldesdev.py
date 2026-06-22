@@ -7,6 +7,7 @@ import re
 import requests
 import math
 import pydeck as pdk
+import uuid
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
@@ -1276,13 +1277,17 @@ else:
                             "Longitud": lng   # Nueva columna
                         }
 
-                        # 3. Guardado
-                        if 'id_pendiente_cargado' in st.session_state and st.session_state.id_pendiente_cargado:
-                            db.table("VENTAS_PENDIENTES").update(data_to_save).eq("ID_Pendiente", st.session_state.id_pendiente_cargado).execute()
+                        # 3. Guardado Blindado
+                        # Ya no necesitamos el if/else de "id_pendiente_cargado" para diferenciar 
+                        # entre update o insert si usamos upsert correctamente.
+                        
+                        data_to_save["ID_Pendiente"] = st.session_state.get('id_pendiente_cargado') or f"PEND-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+                        
+                        db.table("VENTAS_PENDIENTES").upsert(data_to_save).execute()
+                        
+                        if st.session_state.get('id_pendiente_cargado'):
                             st.toast("Venta pendiente actualizada", icon="🔄")
                         else:
-                            data_to_save["ID_Pendiente"] = f"PEND-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                            db.table("VENTAS_PENDIENTES").insert(data_to_save).execute()
                             st.toast("Venta guardada como nuevo pendiente", icon="⏳")
 
                         # Limpieza
