@@ -2,5 +2,4 @@ streamlit
 supabase
 pandas
 xlsxwriter
-requests
-pydeck
+pytz
