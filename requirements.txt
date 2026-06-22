@@ -2,3 +2,7 @@ streamlit
 supabase
 pandas
 xlsxwriter
+requests
+math
+json
+pydeck
