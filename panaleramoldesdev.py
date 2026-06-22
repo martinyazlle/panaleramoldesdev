@@ -1,11 +1,11 @@
 import streamlit as st
+import json
 from supabase import create_client # Importamos el cliente de Supabase
 import pandas as pd
 from datetime import datetime, timedelta
 import re
 import requests
 import math
-import json
 import pydeck as pdk
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
@@ -31,16 +31,20 @@ if not st.session_state.logeado:
     
     if st.button("Iniciar Sesión"):
         # Consulta para verificar usuario y contraseña
-        res = db.table("USUARIOS").select("*").eq("Nombre", usuario_input).eq("Contraseña", password_input).maybe_single().execute()
-        
-        if res.data:
-            st.session_state.logeado = True
-            st.session_state.usuario_actual = res.data['Nombre']
-            st.session_state.rol = res.data['Rol'] # GUARDAMOS EL ROL AQUÍ
-            st.rerun()
-        else:
-            st.error("Usuario o contraseña incorrectos")
-            st.stop()
+        try:
+            res = db.table("USUARIOS").select("*").eq("Nombre", usuario_input).eq("Contraseña", password_input).maybe_single().execute()
+            
+            # Verificamos que res no sea None y que tenga datos dentro
+            if res and res.data:
+                st.session_state.logeado = True
+                st.session_state.usuario_actual = res.data['Nombre']
+                st.session_state.rol = res.data['Rol'] 
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos.")
+        except Exception as e:
+            # Esto captura si hubo un error de conexión al intentar consultar Supabase
+            st.error("Error de conexión con la base de datos. Intenta nuevamente.")
 
 else:
 
@@ -448,41 +452,45 @@ else:
             st.session_state[f"orden_{fecha}"] = {v['Cliente']: i+1 for i, v in enumerate(ruta_optima)}
 
         st.write("### 🗺️ Previsualización de Ruta")
-    
-        # Preparamos el DataFrame con lat/lon y el nombre
-        df_mapa = pd.DataFrame(ruta_optima).rename(columns={'Latitud': 'lat', 'Longitud': 'lon'})
         
-        # Creamos el mapa con PyDeck
-        st.pydeck_chart(pdk.Deck(
-            map_style=None,
-            initial_view_state=pdk.ViewState(
-                latitude=df_mapa['lat'].mean(),
-                longitude=df_mapa['lon'].mean(),
-                zoom=12,
-                pitch=0,
-            ),
-            layers=[
-                # Capa de puntos
-                pdk.Layer(
-                    'ScatterplotLayer',
-                    df_mapa,
-                    get_position='[lon, lat]',
-                    get_color='[200, 30, 0, 160]',
-                    get_radius=100,
-                ),
-                # Capa de etiquetas de texto
-                pdk.Layer(
-                    'TextLayer',
-                    df_mapa,
-                    get_position='[lon, lat]',
-                    get_text='Cliente',
-                    get_color='[0, 0, 0, 200]',
-                    get_size=16,
-                    get_alignment_baseline='"bottom"',
-                    get_pixel_offset='[0, -15]', # Mueve el texto un poco arriba del punto
-                ),
-            ],
-        ))
+        # --- BLOQUE BLINDADO ---
+        if not ruta_optima:
+            st.warning("No hay datos de ubicación para generar el mapa.")
+        else:
+            df_mapa = pd.DataFrame(ruta_optima)
+            
+            # Verificamos que existan las columnas de coordenadas
+            if 'Latitud' in df_mapa.columns and 'Longitud' in df_mapa.columns:
+                df_mapa = df_mapa.rename(columns={'Latitud': 'lat', 'Longitud': 'lon'})
+                
+                # Forzamos conversión a numérico para evitar errores
+                df_mapa['lat'] = pd.to_numeric(df_mapa['lat'], errors='coerce')
+                df_mapa['lon'] = pd.to_numeric(df_mapa['lon'], errors='coerce')
+                df_mapa = df_mapa.dropna(subset=['lat', 'lon'])
+                
+                if not df_mapa.empty:
+                    st.pydeck_chart(pdk.Deck(
+                        map_style=None,
+                        initial_view_state=pdk.ViewState(
+                            latitude=df_mapa['lat'].mean(),
+                            longitude=df_mapa['lon'].mean(),
+                            zoom=12,
+                            pitch=0,
+                        ),
+                        layers=[
+                            pdk.Layer('ScatterplotLayer', df_mapa, get_position='[lon, lat]', 
+                                      get_color='[200, 30, 0, 160]', get_radius=100),
+                            pdk.Layer('TextLayer', df_mapa, get_position='[lon, lat]', 
+                                      get_text='Cliente', get_color='[0, 0, 0, 200]', 
+                                      get_size=16, get_alignment_baseline='"bottom"', 
+                                      get_pixel_offset='[0, -15]'),
+                        ],
+                    ))
+                else:
+                    st.error("Los datos de coordenadas están vacíos o corruptos.")
+            else:
+                st.error("Las columnas 'Latitud'/'Longitud' no existen en la base de datos.")
+        # --- FIN DEL BLOQUE BLINDADO ---
         
         # Formulario de orden
         with st.form(key=f"form_orden_{fecha}"):
