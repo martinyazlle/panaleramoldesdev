@@ -3,6 +3,10 @@ from supabase import create_client # Importamos el cliente de Supabase
 import pandas as pd
 from datetime import datetime, timedelta
 import re
+import requests
+import math
+import json
+import pydeck as pdk
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
@@ -434,6 +438,162 @@ else:
         
         st.dataframe(df_filtrado[['Fecha', 'Nombre', 'Rubro', 'Marca', 'Cantidad', 'Utilidad_Bruta']])
 
+    def obtener_coordenadas(link_maps):
+        """
+        Intenta extraer coordenadas de un link de Google Maps acortado.
+        Como los links de google (goo.gl o maps.app.goo.gl) son redirecciones,
+        primero resolvemos la URL final y luego buscamos los números en el texto.
+        """
+        try:
+            # Resolvemos el link corto a la URL real
+            response = requests.head(link_maps, allow_redirects=True)
+            url_final = response.url
+            
+            # Buscamos patrones de coordenadas en la URL (ej: /@lat,lng)
+            # Esto busca números decimales separados por coma después de un @
+            coordenadas = re.findall(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url_final)
+            
+            if coordenadas:
+                return float(coordenadas[0][0]), float(coordenadas[0][1])
+        except:
+            return None, None
+        return None, None
+
+    def calcular_distancia(coord1, coord2):
+        # Fórmula de Haversine para calcular distancia en línea recta entre dos puntos
+        lat1, lon1 = coord1
+        lat2, lon2 = coord2
+        R = 6371  # Radio de la tierra en km
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        return R * c
+    
+    def optimizar_ruta(origen, destinos):
+        """
+        Ordena los destinos usando el algoritmo del 'vecino más cercano'
+        origen: (lat, lng)
+        destinos: lista de diccionarios con {'Cliente': '...', 'Latitud': x, 'Longitud': y}
+        """
+        ruta_ordenada = []
+        pendientes = destinos.copy()
+        actual = origen
+        
+        while pendientes:
+            # Busca el destino más cercano al punto actual
+            mas_cercano = min(pendientes, key=lambda p: calcular_distancia(actual, (p['Latitud'], p['Longitud'])))
+            ruta_ordenada.append(mas_cercano)
+            actual = (mas_cercano['Latitud'], mas_cercano['Longitud'])
+            pendientes.remove(mas_cercano)
+            
+        return ruta_ordenada
+
+    def generar_diagrama_optimizada(grupo_repartos, punto_origen, fecha):
+        repartos_validos = grupo_repartos.dropna(subset=['Latitud', 'Longitud'])
+        ruta_optima = optimizar_ruta(punto_origen, repartos_validos.to_dict('records'))
+        
+        # 2. Inicializamos el estado del orden
+        if f"orden_{fecha}" not in st.session_state:
+            st.session_state[f"orden_{fecha}"] = {v['Cliente']: i+1 for i, v in enumerate(ruta_optima)}
+    
+        st.write("### 🗺️ Previsualización de Ruta")
+    
+        # 1. Blindaje: Verificamos si hay datos antes de intentar crear el mapa
+        if not ruta_optima:
+            st.warning("No hay suficientes datos con coordenadas para mostrar el mapa.")
+        else:
+            # Creamos el DataFrame y forzamos a que las coordenadas sean números
+            df_mapa = pd.DataFrame(ruta_optima)
+            df_mapa['Latitud'] = pd.to_numeric(df_mapa['Latitud'], errors='coerce')
+            df_mapa['Longitud'] = pd.to_numeric(df_mapa['Longitud'], errors='coerce')
+            
+            # Limpiamos filas con coordenadas nulas después de la conversión
+            df_mapa = df_mapa.dropna(subset=['Latitud', 'Longitud'])
+            
+            if df_mapa.empty:
+                st.warning("No se pudieron procesar las coordenadas para el mapa.")
+            else:
+                # Renombramos para PyDeck
+                df_mapa = df_mapa.rename(columns={'Latitud': 'lat', 'Longitud': 'lon'})
+                
+                # Creamos el mapa solo si hay datos válidos
+                st.pydeck_chart(pdk.Deck(
+                    map_style=None,
+                    initial_view_state=pdk.ViewState(
+                        latitude=df_mapa['lat'].mean(),
+                        longitude=df_mapa['lon'].mean(),
+                        zoom=12,
+                        pitch=0,
+                    ),
+                    layers=[
+                        pdk.Layer(
+                            'ScatterplotLayer',
+                            df_mapa,
+                            get_position='[lon, lat]',
+                            get_color='[200, 30, 0, 160]',
+                            get_radius=100,
+                        ),
+                        pdk.Layer(
+                            'TextLayer',
+                            df_mapa,
+                            get_position='[lon, lat]',
+                            get_text='Cliente',
+                            get_color='[0, 0, 0, 200]',
+                            get_size=16,
+                            get_alignment_baseline='"bottom"',
+                            get_pixel_offset='[0, -15]',
+                        ),
+                    ],
+                ))
+        
+        # Formulario de orden
+        with st.form(key=f"form_orden_{fecha}"):
+            orden_manual = {}
+            for idx, v in enumerate(ruta_optima):
+                orden_manual[v['Cliente']] = st.number_input(
+                    f"Orden para {v['Cliente']}", min_value=1, max_value=len(ruta_optima),
+                    value=st.session_state.get(f"pos_{v['Cliente']}_{fecha}", idx + 1)
+                )
+            submit = st.form_submit_button("Aplicar nuevo orden")
+            
+            if submit:
+                # Guardamos los nuevos valores en session_state
+                for cliente, valor in orden_manual.items():
+                    st.session_state[f"pos_{cliente}_{fecha}"] = valor
+                st.rerun() # Fuerza la recarga para que se ordene la lista
+    
+        # Generación de lista final
+        # Usamos el orden guardado en session_state o el original
+        ruta_reordenada = sorted(ruta_optima, key=lambda x: st.session_state.get(f"pos_{x['Cliente']}_{fecha}", 0))
+        
+        # 3. Mostrar resultados finales
+        st.write("### 🚚 Ruta Optimizada Final")
+        texto_whatsapp = f"*DIAGRAMA DE REPARTOS {fecha}*\n\n"
+        
+        for i, v in enumerate(ruta_reordenada, 1):
+            monto = "0"
+            try:
+                if v.get('Pagos_JSON'):
+                    pagos = json.loads(v['Pagos_JSON'])
+                    if isinstance(pagos, list) and len(pagos) > 0:
+                        monto = pagos[0].get('monto', '0')
+            except:
+                monto = "0"
+            
+            st.write(f"{i}. **{v['Cliente']}** - ${monto} - {v.get('Metodo_Pago', 'N/A')}")
+            texto_whatsapp += f"{i}. {v['Cliente']} ${monto} {v.get('Metodo_Pago', 'N/A')}\n"
+        
+        st.divider()
+        st.text_area("Selecciona y copia:", value=texto_whatsapp, height=200)
+
+    def extraer_coords_desde_link(link):
+        # Busca el patrón @-XX.XXXX,-YY.YYYY en el link
+        match = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', link)
+        if match:
+            return float(match.group(1)), float(match.group(2))
+        return None # Si no encuentra nada
+    
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
 
@@ -1089,7 +1249,18 @@ else:
             with col_f2:
                 if st.button("⏳ GUARDAR COMO PENDIENTE", use_container_width=True):
                     import json
+                    import re # Asegúrate de importar re al principio de tu archivo
+                    
                     try:
+                        # --- NUEVO: Lógica de extracción de coordenadas ---
+                        lat, lng = None, None
+                        link = st.session_state.link_maps_entrega
+                        if link:
+                            # Busca números decimales después de un '@' o en parámetros 'll='
+                            coords = re.findall(r'@(-?\d+\.\d+),(-?\d+\.\d+)', link)
+                            if coords:
+                                lat, lng = float(coords[0][0]), float(coords[0][1])
+                        
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
                         
                         data_to_save = {
@@ -1103,8 +1274,11 @@ else:
                             "Detalle_JSON": json.dumps(st.session_state.carrito_vta),
                             "Forma_Entrega": st.session_state.tipo_entrega,
                             "Direccion_Entrega": st.session_state.direccion_entrega,
-                            "Link_Maps_Entrega": st.session_state.link_maps_entrega,
-                            "Fecha_Entrega": st.session_state.fecha_reparto
+                            "Link_Maps_Entrega": link,
+                            "Fecha_Entrega": st.session_state.fecha_reparto,
+                            # --- AGREGAMOS LAS NUEVAS COLUMNAS ---
+                            "Latitud": lat,
+                            "Longitud": lng
                         }
 
                         # --- LA LOGICA DE DETECCIÓN ---
@@ -1228,20 +1402,58 @@ else:
         if not ventas_reparto:
             st.info("No hay repartos pendientes.")
         else:
-            for v in ventas_reparto:
-                with st.container(border=True):
-                    # Desglosamos datos
-                    c1, c2, c3 = st.columns([2, 2, 1])
-                    c1.write(f"👤 **Cliente:** {v['Cliente']}")
-                    c2.write(f"📍 **Dir:** {v['Direccion_Entrega']}")
+            # 1. Convertimos a DataFrame para agrupar fácilmente
+            df = pd.DataFrame(ventas_reparto)
+            
+            # Aseguramos que la fecha sea tipo datetime para ordenar bien
+            df['Fecha_Entrega'] = pd.to_datetime(df['Fecha_Entrega']).dt.date
+            
+            # Ordenamos por fecha
+            df = df.sort_values(by='Fecha_Entrega')
+            
+            # 2. Agrupamos por fecha
+            for fecha, grupo in df.groupby('Fecha_Entrega'):
+                st.subheader(f"📅 {fecha}")
+                
+                # --- AQUÍ EMPIEZA LA MODIFICACIÓN ---
+                # Usamos una clave única basada en la fecha para que no haya conflictos
+                with st.expander(f"⚙️ Configurar Origen para {fecha}"):
+                    opciones = {"Pañalera (Local)": (-24.793734909695726, -65.42769672376464), "Otro (Link de Maps)": "link"}
+                    sel_origen = st.selectbox("¿Desde dónde sale el reparto?", list(opciones.keys()), key=f"sel_{fecha}")
                     
-                    # Botón de Maps (usando el link que guardamos)
-                    # Ojo: Si guardaste el link en la tabla, úsalo aquí. 
-                    # Si no, podrías tener que buscarlo en la tabla CLIENTES.
-                    if v.get('Link_Maps_Entrega'):
-                        c3.link_button("📍 Abrir Maps", v['Link_Maps_Entrega'])
-                    
-                    st.caption(f"💰 {v['Metodo_Pago']}")
+                    if sel_origen == "Otro (Link de Maps)":
+                        link_maps = st.text_input("Pega el link de Google Maps aquí:")
+                        if link_maps:
+                            coords = extraer_coords_desde_link(link_maps)
+                            if coords:
+                                st.success(f"Coordenadas detectadas: {coords}")
+                                punto_partida = coords
+                            else:
+                                st.error("No pude leer el link. Asegúrate de copiarlo desde el botón 'Compartir' de Google Maps.")
+                                punto_partida = (-24.7825, -65.4111) # Default
+                    else:
+                        punto_partida = opciones[sel_origen]
+
+                # Botón de optimización (Ahora usa 'punto_partida' definido arriba)
+                if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
+                    st.session_state[f"mostrar_diagrama_{fecha}"] = True
+                
+                # Si la bandera es True, mostramos la función SIEMPRE (para que el formulario sobreviva)
+                if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
+                    generar_diagrama_optimizada(grupo, punto_partida, fecha)
+                # --- AQUÍ TERMINA LA MODIFICACIÓN ---
+                
+                # 3. Iteramos sobre los repartos de ESE día
+                for _, v in grupo.iterrows():
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([2, 2, 1])
+                        c1.write(f"👤 **Cliente:** {v['Cliente']}")
+                        c2.write(f"📍 **Dir:** {v['Direccion_Entrega']}")
+                        
+                        if v.get('Link_Maps_Entrega'):
+                            c3.link_button("📍 Maps", v['Link_Maps_Entrega'])
+                        
+                        st.caption(f"💰 {v['Metodo_Pago']}")
 
     # =====================================================================
     # MODULO: 📦 PRODUCTOS
