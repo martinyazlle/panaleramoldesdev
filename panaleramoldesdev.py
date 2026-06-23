@@ -723,19 +723,16 @@ else:
             with tab_modificar:
                 st.subheader("Modificar Cliente Existente")
 
-                # 1. Selector de Cliente (fuera del form)
-                lista_clientes = df_clientes['Nombre'].astype(str) + " " + \
-                                df_clientes['Apellido'].astype(str) + " (ID: " + \
-                                df_clientes['ID_Cliente'].astype(str) + ")"
+                # 1. Selector
+                lista_clientes = df_clientes['Nombre'].astype(str) + " " + df_clientes['Apellido'].astype(str) + " (ID: " + df_clientes['ID_Cliente'].astype(str) + ")"
+                seleccion = st.selectbox("Seleccione el cliente", [""] + lista_clientes.tolist(), key="sel_modificar")
                 
-                cliente_seleccionado = st.selectbox("Seleccione el cliente a modificar", [""] + lista_clientes.tolist(), key="sel_modificar")
-                
-                if cliente_seleccionado and cliente_seleccionado != "":
-                    id_modificar = cliente_seleccionado.split("(ID: ")[1].replace(")", "")
+                if seleccion:
+                    id_modificar = seleccion.split("(ID: ")[1].replace(")", "")
                     fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
 
-                    # 2. Formulario de Modificación
-                    with st.form("form_modificar_cliente"):
+                    # 2. Formulario
+                    with st.form("form_datos"):
                         c1, c2 = st.columns(2)
                         with c1:
                             nuevo_nombre = st.text_input("Nombre", value=fila.get('Nombre', ''))
@@ -755,7 +752,6 @@ else:
                         
                         nueva_obs = st.text_area("Observaciones", value=fila.get('Observaciones', ''))
                         
-                        # Definimos los inputs de selección DENTRO del form
                         zonas_lista = ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"]
                         idx_zona = zonas_lista.index(fila.get('Zona')) if fila.get('Zona') in zonas_lista else 0
                         input_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
@@ -764,46 +760,41 @@ else:
                         idx_tipo = 0 if fila.get('Tipo_Cliente') == "CONSUMIDOR FINAL" else 1
                         input_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
                         
-                        # --- Botón de guardar ---
                         guardar_btn = st.form_submit_button("Guardar Cambios")
-
-                    # 3. ZONA DE ACCIONES (Fuera del formulario)
-                    col_g, col_e = st.columns(2)
-                    
-                    if st.session_state.rol == "Administrador":
-                        confirmar_eliminar = col_e.checkbox("Confirmar eliminación", key="confirmar_eliminar")
-                        eliminar_btn = col_e.button("🗑️ Eliminar Cliente", type="primary")
-                    else:
-                        col_e.button("🗑️ Eliminar Cliente", disabled=True)
-                        eliminar_btn = False
-
-                    # 4. Lógica de Guardado (Usamos input_zona e input_tipo)
+            
+                    # ACCIÓN DE GUARDAR (FUERA DEL FORM)
                     if guardar_btn:
                         db.table("CLIENTES").update({
-                            "Nombre": nuevo_nombre.upper(),
-                            "Apellido": nuevo_apellido.upper() if nuevo_apellido else None,
+                            "Nombre": str(nuevo_nombre or "").upper(),
+                            "Apellido": (nuevo_apellido or "").upper(),
                             "DNI": nuevo_dni,
-                            "Razón Social": nueva_razon,
+                            "Razón Social": (nueva_razon or "").upper(),
                             "CUIT": nuevo_cuit,
                             "Telefono": nuevo_telefono,
-                            "Direccion_1": nuevo_dir1.upper(),
-                            "Direccion_2": nuevo_dir2.upper(),
-                            "Direccion_3": nuevo_dir3.upper(),
-                            "Zona": input_zona,      # <--- Usamos la variable del form
-                            "Tipo_Cliente": input_tipo, # <--- Usamos la variable del form
-                            "Observaciones": nueva_obs
+                            "Direccion_1": (nuevo_dir1 or "").upper(),
+                            "Link_Direccion_1": nuevo_link1,
+                            "Direccion_2": (nuevo_dir2 or "").upper(),
+                            "Link_Direccion_2": nuevo_link2,
+                            "Direccion_3": (nuevo_dir3 or "").upper(),
+                            "Link_Direccion_3": nuevo_link3,
+                            "Observaciones": nueva_obs,
+                            "Zona": input_zona,
+                            "Tipo_Cliente": input_tipo
                         }).eq("ID_Cliente", int(id_modificar)).execute()
-                        st.success("✅ Cliente actualizado!")
+                        st.success("Guardado")
                         st.rerun()
 
-                    # 5. Lógica de Eliminación
-                    if eliminar_btn and st.session_state.rol == "Administrador":
-                        if confirmar_eliminar:
-                            db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
-                            st.success("🗑️ Cliente eliminado!")
-                            st.rerun()
-                        else:
-                            st.warning("⚠️ Debes marcar 'Confirmar eliminación' para borrar.")
+                    # ACCIÓN DE ELIMINAR (FUERA DEL FORM Y CON KEY ÚNICA)
+                    st.divider()
+                    if st.session_state.get('rol') == "Administrador":
+                        confirmar_del = st.checkbox("Confirmar eliminación", key="check_del_final")
+                        if st.button("🗑️ Eliminar Cliente", key="btn_del_final"):
+                            if confirmar_del:
+                                db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
+                                st.success("🗑️ Cliente eliminado.")
+                                st.rerun()
+                            else:
+                                st.warning("⚠️ Debes marcar la casilla de confirmación.")
 
     # =====================================================================
     # MODULO: 🛒 PUNTO DE VENTA
