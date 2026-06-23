@@ -3,3 +3,4 @@ supabase
 pandas
 xlsxwriter
 pytz
+pydeck
