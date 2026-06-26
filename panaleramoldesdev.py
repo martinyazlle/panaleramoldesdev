@@ -1474,16 +1474,14 @@ else:
         st.session_state.df_prod = df_prod.copy()
 
         # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
+        # Definición limpia
         if st.session_state.rol == "Administrador":
-            nombres_tabs = ["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar"]
-            tabs = st.tabs(nombres_tabs)
+            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar"])
             tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar = tabs
         else:
-            nombres_tabs = ["🔍 Buscar"]
-            tabs = st.tabs(nombres_tabs)
-            tab_buscar = tabs[0]
-            tab_alta = tab_modificar = tab_cambios = tab_importar = None
-
+            tabs = st.tabs(["🔍 Buscar", "🔄 Cambios"])
+            tab_buscar, tab_cambios = tabs
+            
         # --- PESTAÑA BUSCAR (VISIBLE PARA TODOS) ---
         with tab_buscar:
             st.subheader("Buscador de Productos")
@@ -1502,8 +1500,134 @@ else:
                 
             st.dataframe(df_v, use_container_width=True, hide_index=True)
 
+        # --- PESTAÑA CAMBIOS (Mejorada) ---
+        with tab_cambios:
+            st.subheader("🔄 Gestión de Cambios y Devoluciones")
+
+            # 1. PANEL ADMINISTRADOR (SIEMPRE VISIBLE PARA ADMIN)
+            if st.session_state.get('rol') == "Administrador":
+                st.divider()
+                st.subheader("🛡️ Panel de Supervisión (Admin)")
+                pendientes = db.table("PRE_CAMBIOS").select("*").eq("Estado", "PENDIENTE").execute().data
+                
+                if pendientes:
+                    for p in pendientes:
+                        # Estilo más prolijo con una caja (container)
+                        with st.container(border=True):
+                            c1, c2 = st.columns([3, 1])
+                            with c1:
+                                st.markdown(f"**Producto:** {p['Nombre']} | **Usuario:** {p['Usuario']}")
+                                st.caption(f"Motivo original: {p['Descripción']}")
+                            
+                            with st.form(f"form_admin_{p['id']}"):
+                                col_a, col_b, col_c = st.columns(3)
+                                new_cant = col_a.number_input("Cantidad:", value=max(p['Entra'], p['Sale']), key=f"cant_{p['id']}")
+                                new_tipo = col_b.selectbox("Tipo:", ["ENTRA", "SALE"], index=0 if p['Entra'] > 0 else 1, key=f"tipo_{p['id']}")
+                                new_desc = col_c.text_input("Motivo editado:", value=p['Descripción'], key=f"desc_{p['id']}")
+                                
+                                # Botones alineados en el mismo formulario
+                                btn_col1, btn_col2 = st.columns(2)
+                                if btn_col1.form_submit_button("💾 Aprobar y Procesar", use_container_width=True):
+                                    # 1. Obtener datos actuales
+                                    prod_data = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", p['Código']).execute().data
+                                    
+                                    if prod_data:
+                                        stock_viejo = int(prod_data[0]['Stock_Actual'])
+                                        stock_nuevo = (stock_viejo + new_cant) if new_tipo == 'ENTRA' else (stock_viejo - new_cant)
+                                            
+                                        # 2. Actualizar stock
+                                        db.table("PRODUCTOS").update({"Stock_Actual": stock_nuevo}).eq("ID_Producto", p['Código']).execute()
+                                        
+                                        # 3. Insertar en CAMBIOS (con nombres de columnas sin espacios)
+                                        try:
+                                            db.table("CAMBIOS").insert({
+                                                "Fecha": datetime.now().isoformat(),
+                                                "Código": p['Código'],
+                                                "Nombre": p['Nombre'],
+                                                "Descripción": new_desc,
+                                                "Entra": int(new_cant) if new_tipo == 'ENTRA' else 0,
+                                                "Sale": int(new_cant) if new_tipo == 'SALE' else 0,
+                                                "existencia_ant": stock_viejo,      # Nombre nuevo
+                                                "existencia_actual": stock_nuevo    # Nombre nuevo
+                                            }).execute()
+                                            
+                                            # 4. Marcar como procesado
+                                            db.table("PRE_CAMBIOS").update({"Estado": "PROCESADO"}).eq("id", p['id']).execute()
+                                            
+                                            st.success("✅ Stock actualizado correctamente.")
+                                            st.rerun()
+
+                                        except Exception as e:
+                                            st.error(f"Error al insertar en CAMBIOS: {e}")
+                                
+                                if btn_col2.form_submit_button("❌ Rechazar", use_container_width=True):
+                                    db.table("PRE_CAMBIOS").update({"Estado": "RECHAZADO"}).eq("id", p['id']).execute()
+                                    st.rerun()
+                else:
+                    st.info("No hay cambios pendientes.")
+                st.divider()
+            
+            # 1. Inicializar lista de items
+            if 'lista_cambios' not in st.session_state:
+                st.session_state.lista_cambios = []
+            
+            # 2. Buscador (Solo se muestra para cargar items)
+            opciones_productos = (st.session_state.df_prod['Nombre'] + " (ID: " + 
+                                 st.session_state.df_prod['ID_Producto'].astype(str) + ")").tolist()
+            
+            prod_seleccionado = st.selectbox("Buscar producto", options=opciones_productos, index=None, placeholder="Escriba para buscar...", key="buscador_cambios")
+            
+            if prod_seleccionado:
+                nombre_real = prod_seleccionado.split(" (ID: ")[0]
+                id_real = prod_seleccionado.split("(ID: ")[1].replace(")", "")
+                
+                c1, c2 = st.columns(2)
+                cant_sel = c1.number_input("Cantidad:", min_value=1, value=1, key="cant_input")
+                tipo_sel = c2.radio("Tipo:", ["ENTRA", "SALE"], horizontal=True, key="tipo_input")
+                
+                if st.button("➕ Añadir a la lista"):
+                    st.session_state.lista_cambios.append({
+                        "ID": id_real,
+                        "Producto": nombre_real,
+                        "Cantidad": cant_sel,
+                        "Tipo": tipo_sel
+                    })
+                    st.rerun()
+            
+            # 3. Mostrar resumen y botones de acción
+            if st.session_state.lista_cambios:
+                st.write("Resumen del movimiento:")
+                st.table(pd.DataFrame(st.session_state.lista_cambios))
+                
+                if st.button("❌ Limpiar lista"):
+                    st.session_state.lista_cambios = []
+                    st.rerun()
+            
+                motivo = st.text_input("Motivo del cambio:")
+                   
+                # PANEL VENDEDOR
+                if st.button("📤 Enviar Pre-cambio a Revisión"):
+                    try:
+                        for item in st.session_state.lista_cambios:
+                            db.table("PRE_CAMBIOS").insert({
+                                "Fecha": datetime.now().isoformat(),
+                                "Código": item['ID'],
+                                "Nombre": item['Producto'],
+                                "Descripción": motivo,
+                                "Entra": int(item['Cantidad']) if item['Tipo'] == 'ENTRA' else 0,
+                                "Sale": int(item['Cantidad']) if item['Tipo'] == 'SALE' else 0,
+                                "Estado": "PENDIENTE",
+                                "Usuario": st.session_state.get('usuario', 'Desconocido')
+                            }).execute()
+                        st.success("✅ Enviado a revisión.")
+                        st.session_state.lista_cambios = []
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
         # --- PESTAÑAS DE ADMINISTRADOR ---
         if st.session_state.rol == "Administrador":
+            
             # --- PESTAÑA ALTA ---
             with tab_alta:
                 st.subheader("➕ Registrar Nuevo Artículo")
@@ -1645,69 +1769,6 @@ else:
                                     st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
                 else:
                     st.info("No hay productos para modificar.")
-
-            # --- PESTAÑA CAMBIOS ---
-            with tab_cambios:
-                st.subheader("🔄 Gestión de Cambios y Devoluciones")
-                
-                with st.form("form_cambios_completo"):
-                    c1, c2 = st.columns(2)
-                    nombres_prod = st.session_state.df_prod['Nombre'].tolist()
-                    
-                    with c1:
-                        p_entra = st.selectbox("Producto que ENTRA:", [""] + nombres_prod)
-                        cant_entra = st.number_input("Cantidad que ENTRA:", min_value=0, value=0)
-                    with c2:
-                        p_sale = st.selectbox("Producto que SALE:", [""] + nombres_prod)
-                        cant_sale = st.number_input("Cantidad que SALE:", min_value=0, value=0)
-                    
-                    motivo = st.text_input("Motivo / Descripción del cambio:")
-                    btn_registrar = st.form_submit_button("💾 Registrar Movimiento en el Sistema")
-
-                    if btn_registrar:
-                        try:
-                            # Función para actualizar stock en Supabase (CORREGIDA)
-                            def ajustar_stock(nombre, cantidad, tipo):
-                                fila = st.session_state.df_prod[st.session_state.df_prod['Nombre'] == nombre].iloc[0]
-                                id_prod = fila['ID_Producto']
-                                stock_actual = int(fila['Stock_Actual'])
-                                
-                                if tipo == 'ENTRA':
-                                    nuevo_stock = stock_actual + cantidad
-                                else:
-                                    nuevo_stock = max(0, stock_actual - cantidad)
-                                
-                                # 1. Actualizar en tabla PRODUCTOS
-                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock}).eq("ID_Producto", id_prod).execute()
-                                
-                                # 2. Registrar en tabla CAMBIOS (Usando nombres exactos de tus columnas)
-                                db.table("CAMBIOS").insert({
-                                    "Fecha": datetime.now().isoformat(), # Formato recomendado para timestamp
-                                    "Código": str(id_prod),
-                                    "Nombre": str(nombre),
-                                    "Descripción": str(motivo) if motivo else "Sin motivo",
-                                    "Entra": int(cantidad) if tipo == 'ENTRA' else 0,
-                                    "Sale": int(cantidad) if tipo == 'SALE' else 0,
-                                    "Existencia Ant.": int(stock_actual),
-                                    "Existencia Actual": int(nuevo_stock)
-                                }).execute()
-                                
-                                return stock_actual, nuevo_stock
-
-                            # Procesar entradas
-                            if p_entra and cant_entra > 0:
-                                ajustar_stock(p_entra, cant_entra, 'ENTRA')
-                            
-                            # Procesar salidas
-                            if p_sale and cant_sale > 0:
-                                ajustar_stock(p_sale, cant_sale, 'SALE')
-
-                            st.success("✅ Stock actualizado y registro guardado en Supabase.")
-                            if 'df_prod' in st.session_state: del st.session_state['df_prod']
-                            st.rerun()
-
-                        except Exception as e:
-                            st.error(f"Error al registrar el movimiento: {e}")
 
             # --- PESTAÑA IMPORTAR (Versión Optimizada) ---
             with tab_importar:
