@@ -1381,7 +1381,6 @@ else:
     # MODULO: 🚚 GESTION DE REPARTOS
     # =====================================================================
     if menu == "🚚 Gestión de Repartos":
-        st.header("🗺️ Planificación de Repartos")
         
         # Obtenemos ventas pendientes de reparto
         # NOTA: Asegúrate de que las columnas existan en VENTAS_PENDIENTES
@@ -1393,18 +1392,21 @@ else:
         if not ventas_reparto:
             st.info("No hay repartos pendientes.")
         else:
-            # 1. Convertimos a DataFrame para agrupar fácilmente
             df = pd.DataFrame(ventas_reparto)
-            
-            # Aseguramos que la fecha sea tipo datetime para ordenar bien
             df['Fecha_Entrega'] = pd.to_datetime(df['Fecha_Entrega']).dt.date
-            
-            # Ordenamos por fecha
             df = df.sort_values(by='Fecha_Entrega')
             
-            # 2. Agrupamos por fecha
+            # 1. Calculamos el total general
+            total_general = len(df)
+            
+            # 2. Título con el número integrado entre paréntesis
+            st.markdown(f"## 🗺️ Planificación de Repartos ({total_general})")
+            st.divider()
+            
+            # 3. Agrupamos por fecha
             for fecha, grupo in df.groupby('Fecha_Entrega'):
-                st.subheader(f"📅 {fecha}")
+                # Título del día con su propio contador entre paréntesis
+                st.subheader(f"📅 {fecha} ({len(grupo)})")
                 
                 # --- AQUÍ EMPIEZA LA MODIFICACIÓN ---
                 # Usamos una clave única basada en la fecha para que no haya conflictos
