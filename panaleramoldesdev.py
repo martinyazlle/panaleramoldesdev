@@ -593,6 +593,36 @@ else:
         if match:
             return float(match.group(1)), float(match.group(2))
         return None # Si no encuentra nada
+
+    # --- DIÁLOGO DE ALTA RÁPIDA ---
+    # --- DIÁLOGO DE ALTA RÁPIDA ---
+    @st.dialog("➕ Nuevo Cliente Rápido")
+    def abrir_alta_cliente_rapida():
+        with st.form("form_nuevo_cliente_rapido"):
+            nombre = st.text_input("Nombre*")
+            apellido = st.text_input("Apellido*")
+            telefono = st.text_input("Teléfono* (10 dígitos)", max_chars=10)
+            dir1 = st.text_input("Dirección 1*")
+            link1 = st.text_input("Link Dirección 1 (Google Maps)") # <--- NUEVO CAMPO
+            zona = st.selectbox("Zona*", ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"])
+            
+            submitted = st.form_submit_button("Guardar Cliente")
+            if submitted:
+                if not all([nombre, apellido, telefono, dir1]):
+                    st.error("Faltan completar campos obligatorios")
+                else:
+                    nuevo_cliente = {
+                        "Nombre": nombre.upper(), 
+                        "Apellido": apellido.upper(),
+                        "Telefono": telefono, 
+                        "Direccion_1": dir1.upper(),
+                        "Link_Direccion_1": link1, # <--- SE AGREGA AL GUARDADO
+                        "Zona": zona, 
+                        "Tipo_Cliente": "CONSUMIDOR FINAL"
+                    }
+                    db.table("CLIENTES").insert(nuevo_cliente).execute()
+                    st.success("✅ Cliente guardado!")
+                    st.rerun()
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -859,26 +889,20 @@ else:
             st.session_state.carrito_vta = []
 
         # 2. INTERFAZ: SELECTORES
-        cliente_sel_row = None
         with st.container(border=True):
-            c1, c2, c3 = st.columns([3, 1, 1])
+            c1, c2, c3, c4 = st.columns([2.5, 0.5, 1, 1]) 
             
+            # --- 1. CREAR LA COLUMNA DISPLAY PRIMERO ---
             df_clie['Display'] = (df_clie['Nombre'].astype(str) + " " + df_clie['Apellido'].astype(str) + " (" + df_clie['Telefono'].astype(str) + ")")
             
-            # --- LOGICA MEJORADA DE PERSISTENCIA ---
-            # Si tenemos un ID recuperado, lo usamos para buscar el display inicial
+            # --- 2. AHORA SÍ: LÓGICA DE PERSISTENCIA ---
             valor_inicial = None
             if 'id_cliente_recuperado' in st.session_state:
                 candidatos = df_clie[df_clie['ID_Cliente'].astype(str) == str(st.session_state.id_cliente_recuperado)]
                 if not candidatos.empty:
                     valor_inicial = candidatos.iloc[0]['Display']
 
-            # 1. Inicialización segura
-            cliente_nombre_final = "Consumidor Final"
-            id_cliente_final = "0"
-            cliente_sel_row = None
-
-            # 2. Tu Selectbox
+            # --- 3. SELECTOR DE CLIENTE ---
             cliente_display = c1.selectbox(
                 "👤 Buscar Cliente", 
                 options=df_clie['Display'].tolist(),
@@ -886,28 +910,31 @@ else:
                 placeholder="Seleccione o busque un cliente..."
             )
             
-            # 3. Lógica de asignación
+            # --- BOTÓN DE ACCESO DIRECTO ---
+            if c2.button("➕", help="Agregar nuevo cliente"):
+                abrir_alta_cliente_rapida()
+            
+            # --- LÓGICA DE ASIGNACIÓN (Indentación corregida) ---
+            cliente_sel_row = None
             if cliente_display:
                 cliente_sel_row = df_clie[df_clie['Display'] == cliente_display].iloc[0]
                 cliente_nombre_final = cliente_sel_row['Nombre'] + " " + cliente_sel_row['Apellido']
                 id_cliente_final = str(cliente_sel_row['ID_Cliente'])
-                st.session_state.id_cliente_recuperado = id_cliente_final # Persistencia
+                st.session_state.id_cliente_recuperado = id_cliente_final 
             else:
-                # Si no hay nada seleccionado, aseguramos los valores por defecto
                 id_cliente_final = "0"
                 cliente_nombre_final = "Consumidor Final"
                 if 'id_cliente_recuperado' in st.session_state:
                     del st.session_state.id_cliente_recuperado
 
-            # Vendedor ahora en c2
-            vendedor_sel = c2.selectbox("👔 Vendedor", df_vend['Nombre'].tolist())
+            # Vendedor ahora en c4 (columna nueva)
+            vendedor_sel = c4.selectbox("👔 Vendedor", df_vend['Nombre'].tolist())
             
             # Lista ahora en c3
             def cambiar_lista_global():
                 st.session_state.lista_global_vta = st.session_state.selector_global
 
             lista_opciones = ["Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"]
-            
             lista_global = c3.selectbox(
                 "🏷️ Lista", 
                 options=lista_opciones,
@@ -915,7 +942,7 @@ else:
                 key="selector_global",
                 on_change=cambiar_lista_global
             )
-
+            
         # 3. BUSCADOR DE PRODUCTOS
         st.divider()
         st.subheader("🔍 Añadir Productos")
