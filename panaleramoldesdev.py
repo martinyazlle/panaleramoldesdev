@@ -2550,21 +2550,33 @@ else:
             else:
                 df_filtrado = pd.DataFrame() # Tabla vacía si no hay datos
 
-            # --- MOSTRAR MÉTRICAS SIEMPRE ---
-            c1, c2, c3 = st.columns(3)
+            # --- MOSTRAR MÉTRICAS (SOLO SALDO) ---
+            # Ajustamos a una sola columna para que el saldo quede centrado o destacado
+            col_saldo = st.columns(1)
+            
             if not df_filtrado.empty:
                 ingresos = df_filtrado[df_filtrado['Tipo'] == 'Ingreso']['Monto'].sum()
                 egresos = df_filtrado[df_filtrado['Tipo'] == 'Egreso']['Monto'].sum()
+                saldo_final = ingresos - egresos
             else:
-                ingresos, egresos = 0.0, 0.0
-                
-            c1.metric("Ingresos", f"${ingresos:,.2f}")
-            c2.metric("Egresos", f"${egresos:,.2f}")
-            c3.metric("Saldo", f"${ingresos - egresos:,.2f}")
+                saldo_final = 0.0
+            
+            # Mostramos únicamente la métrica del saldo
+            st.metric("Saldo", f"${saldo_final:,.2f}")
+            
+            st.divider() # Un separador visual para que quede más prolijo
 
             # --- MOSTRAR TABLA O AVISO ---
             if not df_filtrado.empty:
-                st.dataframe(df_filtrado, use_container_width=True)
+                # Definimos las columnas que SÍ queremos mostrar
+                columnas_a_mostrar = ['Fecha', 'Tipo', 'Concepto', 'Monto', 'Forma_Pago']
+                
+                # Renderizamos solo esas columnas y ocultamos el índice
+                st.dataframe(
+                    df_filtrado[columnas_a_mostrar], 
+                    use_container_width=True, 
+                    hide_index=True  # Esto oculta el número de fila a la izquierda
+                )
             else:
                 st.info("No hay movimientos registrados para la fecha seleccionada.")
 
