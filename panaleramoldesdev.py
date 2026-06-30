@@ -807,10 +807,11 @@ else:
                         """)
                     # -----------------------------
                     
-                    # --- NUEVO: BOTÓN ASIGNAR GIFT CARD ---
-                    if st.button("🎁 Gestionar Gift Card"):
-                        abrir_asignacion_gift_card(id_modificar, f"{fila['Nombre']} {fila['Apellido']}")
-                    # --------------------------------------
+                    # --- NUEVO: BOTÓN ASIGNAR GIFT CARD (ESTO SOLO LO VE EL ADMINISTRADOR) ---
+                    if st.session_state.get('rol') == "Administrador":
+                        if st.button("🎁 Gestionar Gift Card"):
+                            abrir_asignacion_gift_card(id_modificar, f"{fila['Nombre']} {fila['Apellido']}")
+                    # --------------------------------------------------------------------------
 
                     # 2. Formulario
                     with st.form("form_datos"):
