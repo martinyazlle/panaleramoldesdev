@@ -7,6 +7,7 @@ import requests
 import math
 import json
 import pydeck as pdk
+import uuid
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
@@ -623,6 +624,36 @@ else:
                     db.table("CLIENTES").insert(nuevo_cliente).execute()
                     st.success("✅ Cliente guardado!")
                     st.rerun()
+
+    @st.dialog("➕ Asignar Nueva Gift Card")
+    def abrir_asignacion_gift_card(id_cliente, nombre_cliente):
+        st.write(f"Asignando Gift Card a: **{nombre_cliente}**")
+        
+        with st.form("form_asignar_gift"):
+            monto = st.number_input("Monto inicial de la Gift Card", min_value=0.0, step=100.0)
+            
+            # Obtenemos las formas de pago disponibles
+            metodos_db = db.table("FORMAS_PAGO").select("Nombre_Pago").eq("Activo", True).execute()
+            opciones = [item['Nombre_Pago'] for item in metodos_db.data] if metodos_db.data else ["Efectivo"]
+            forma_pago = st.selectbox("Forma de pago de la Gift Card", opciones)
+            
+            if st.form_submit_button("Confirmar Emisión"):
+                nueva_gc = {
+                    "ID_GiftCard": str(uuid.uuid4()), 
+                    "ID_Cliente": int(id_cliente), # Ya aseguramos que es int8/bigint
+                    "Saldo_Actual": float(monto),
+                    "Saldo_Inicial": float(monto), # <--- NUEVO
+                    "Forma_Pago_Adquisicion": forma_pago, # <--- NUEVO
+                    "Estado": True,
+                    "Fecha_Creacion": datetime.now().isoformat()
+                }
+
+                try:
+                    db.table("GIFT_CARDS").insert(nueva_gc).execute()
+                    st.success(f"✅ Gift Card de ${monto:,.2f} asignada!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al guardar en la base de datos: {e}")
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -753,13 +784,33 @@ else:
             with tab_modificar:
                 st.subheader("Modificar Cliente Existente")
 
-                # 1. Selector
+                # 1. Selector (Mover esto fuera del 'if seleccion')
                 lista_clientes = df_clientes['Nombre'].astype(str) + " " + df_clientes['Apellido'].astype(str) + " (ID: " + df_clientes['ID_Cliente'].astype(str) + ")"
                 seleccion = st.selectbox("Seleccione el cliente", [""] + lista_clientes.tolist(), key="sel_modificar")
                 
+                # Ahora evaluamos seleccion aquí:
                 if seleccion:
                     id_modificar = seleccion.split("(ID: ")[1].replace(")", "")
                     fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
+
+                    # --- AQUÍ ES DONDE DEBE IR ---
+                    # Primero buscamos si tiene gift card activa
+                    gc_data = db.table("GIFT_CARDS").select("*").eq("ID_Cliente", int(id_modificar)).eq("Estado", True).execute().data
+                    
+                    if gc_data:
+                        gc = gc_data[0]
+                        st.info(f"""
+                        **Detalles de Gift Card Activa:**
+                        - Saldo Inicial: ${gc['Saldo_Inicial']:,.2f}
+                        - Saldo Actual: ${gc['Saldo_Actual']:,.2f}
+                        - Pagada con: {gc['Forma_Pago_Adquisicion']}
+                        """)
+                    # -----------------------------
+                    
+                    # --- NUEVO: BOTÓN ASIGNAR GIFT CARD ---
+                    if st.button("🎁 Gestionar Gift Card"):
+                        abrir_asignacion_gift_card(id_modificar, f"{fila['Nombre']} {fila['Apellido']}")
+                    # --------------------------------------
 
                     # 2. Formulario
                     with st.form("form_datos"):
@@ -905,8 +956,14 @@ else:
         with st.container(border=True):
             c1, c2, c3, c4 = st.columns([2.5, 0.5, 1, 1]) 
             
-            # --- 1. CREAR LA COLUMNA DISPLAY PRIMERO ---
-            df_clie['Display'] = (df_clie['Nombre'].astype(str) + " " + df_clie['Apellido'].astype(str) + " (" + df_clie['Telefono'].astype(str) + ")")
+            # --- 1. CREAR LA COLUMNA DISPLAY ---
+            # Incluimos el ID de forma oculta pero estructurada para poder extraerlo fácil
+            df_clie['Display'] = (
+                df_clie['Nombre'].astype(str) + " " + 
+                df_clie['Apellido'].astype(str) + " (" + 
+                df_clie['Telefono'].astype(str) + ") - ID: " + 
+                df_clie['ID_Cliente'].astype(str)
+            )
             
             # --- 2. AHORA SÍ: LÓGICA DE PERSISTENCIA ---
             valor_inicial = None
@@ -922,6 +979,18 @@ else:
                 index=df_clie['Display'].tolist().index(valor_inicial) if valor_inicial and valor_inicial in df_clie['Display'].tolist() else None, 
                 placeholder="Seleccione o busque un cliente..."
             )
+
+            # --- EXTRACCIÓN SEGURA Y ÚNICA ---
+            if cliente_display and " - ID: " in cliente_display:
+                try:
+                    # Extraemos el ID después de " - ID: "
+                    id_str = cliente_display.split(" - ID: ")[1]
+                    st.session_state.cliente_actual_id = int(id_str)
+                except Exception as e:
+                    st.error(f"Error al procesar ID: {e}")
+                    st.session_state.cliente_actual_id = None
+            else:
+                st.session_state.cliente_actual_id = None
             
             # --- BOTÓN DE ACCESO DIRECTO ---
             if c2.button("➕", help="Agregar nuevo cliente"):
@@ -1061,9 +1130,34 @@ else:
             # --- SECCIÓN DE PAGOS ---
             st.subheader("💳 Formas de Pago")
             
-            metodos_db = db.table("FORMAS_PAGO").select("Nombre_Pago").eq("Activo", True).execute()
-            lista_pagos = [item['Nombre_Pago'] for item in metodos_db.data] if metodos_db.data else ["Efectivo"]
+            # 1. CARGAR MÉTODOS DESDE SUPABASE (Dinámico)
+            try:
+                # Traemos solo los métodos activos
+                metodos_db = db.table("FORMAS_PAGO").select("Nombre_Pago").eq("Activo", True).execute().data
+                lista_pagos = [m["Nombre_Pago"] for m in metodos_db]
+            except Exception as e:
+                # Fallback por si hay error en la tabla, para no romper la app
+                lista_pagos = ["Efectivo", "Transferencia", "Débito", "Crédito"]
+            
+            # 2. AGREGAR GIFT CARD SI APLICA
+            if 'cliente_actual_id' in st.session_state and st.session_state.cliente_actual_id is not None:
+                id_busqueda = int(st.session_state.cliente_actual_id)
                 
+                gc_data = db.table("GIFT_CARDS") \
+                            .select("Saldo_Actual, ID_GiftCard") \
+                            .eq("ID_Cliente", id_busqueda) \
+                            .eq("Estado", True) \
+                            .execute().data
+                
+                if gc_data and gc_data[0]['Saldo_Actual'] > 0:
+                    saldo_disponible = gc_data[0]['Saldo_Actual']
+                    nombre_opcion = f"Gift Card (${saldo_disponible:,.0f})"
+                    lista_pagos.append(nombre_opcion)
+                    st.session_state['gc_activa_id'] = gc_data[0]['ID_GiftCard']
+                    st.session_state['gc_saldo_disponible'] = saldo_disponible
+            # ----------------------------------------
+            
+            # Aquí sigue tu código original que genera los selectores (el for loop)
             if 'pagos_split' not in st.session_state:
                 st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
 
@@ -1170,10 +1264,27 @@ else:
 
             with col_f1:
                 if st.button("🏁 FINALIZAR Y REGISTRAR VENTA", use_container_width=True, type="primary"):
+                    # 0. Verificación de sumas
                     suma_pagos = sum(float(p["monto"]) for p in st.session_state.pagos_split)
                     if abs(suma_pagos - total_final_vta) > 0.01:
                         st.error(f"¡Error! La suma de los pagos (${suma_pagos:.2f}) no coincide con el total (${total_final_vta:.2f})")
                         st.stop()
+                    
+                    # --- NUEVO: BLINDAJE DE SEGURIDAD PARA GIFT CARDS ---
+                    for pago in st.session_state.pagos_split:
+                        if "Gift Card" in pago["metodo"]:
+                            # Re-consultamos el saldo real en la base de datos en este instante
+                            gc_check = db.table("GIFT_CARDS") \
+                                         .select("Saldo_Actual") \
+                                         .eq("ID_GiftCard", st.session_state.get('gc_activa_id')) \
+                                         .single().execute()
+                            
+                            saldo_real = gc_check.data['Saldo_Actual'] if gc_check.data else 0
+                            
+                            if pago["monto"] > saldo_real:
+                                st.error(f"❌ ¡Saldo insuficiente en Gift Card! Disponible: ${saldo_real:,.2f}")
+                                st.stop() # Detiene todo el proceso antes de que se grabe nada
+                    # ----------------------------------------------------
                     
                     try:
                         # 1. DEFINIR DATOS BÁSICOS PRIMERO
@@ -1233,7 +1344,7 @@ else:
                             metodo = pago["metodo"]
                             monto = float(pago["monto"])
                             
-                            # A. REGISTRO DE INGRESO (Siempre ocurre)
+                            # --- A. REGISTRO DE INGRESO (Siempre ocurre) ---
                             db.table("CAJA").insert({
                                 "ID_Turno": id_turno_val,
                                 "Fecha": datetime.now().isoformat(),
@@ -1243,28 +1354,29 @@ else:
                                 "Forma_Pago": metodo
                             }).execute()
 
-                            # B. EGRESO AUTOMÁTICO (Si es Efectivo + Reparto)
-                            if metodo == "Efectivo" and st.session_state.tipo_entrega == "Reparto":
+                            # --- B. LÓGICA DE EGRESO AUTOMÁTICO ---
+                            # Si es efectivo y reparto, O si es otro método (incluyendo Gift Card)
+                            es_efectivo_reparto = (metodo == "Efectivo" and st.session_state.tipo_entrega == "Reparto")
+                            es_otro_metodo = (metodo != "Efectivo")
+                            
+                            if es_efectivo_reparto or es_otro_metodo:
+                                # Aquí incluimos la lógica de descuento de saldo si es Gift Card
+                                if "Gift Card" in metodo:
+                                    gc_id = st.session_state.get('gc_activa_id')
+                                    nuevo_saldo = st.session_state.get('gc_saldo_disponible', 0) - monto
+                                    db.table("GIFT_CARDS").update({"Saldo_Actual": float(nuevo_saldo)}).eq("ID_GiftCard", gc_id).execute()
+                                    if nuevo_saldo <= 0:
+                                        db.table("GIFT_CARDS").update({"Estado": False}).eq("ID_GiftCard", gc_id).execute()
+
+                                # Registro del egreso en caja
                                 db.table("CAJA").insert({
                                     "ID_Turno": id_turno_val,
                                     "Fecha": datetime.now().isoformat(),
                                     "Tipo": "Egreso",
-                                    "Concepto": f"RETIRO POR REPARTO (Venta {id_v})",
-                                    "Monto": monto,
-                                    "Forma_Pago": "Efectivo"
-                                }).execute()
-                                
-                            # C. EGRESO AUTOMÁTICO (Si NO es Efectivo)
-                            elif metodo != "Efectivo":
-                                db.table("CAJA").insert({
-                                    "ID_Turno": id_turno_val,
-                                    "Fecha": datetime.now().isoformat(),
-                                    "Tipo": "Egreso",
-                                    "Concepto": f"RETIRO PAGO {metodo.upper()}",
+                                    "Concepto": f"RETIRO PAGO {metodo.upper()} (Venta {id_v})",
                                     "Monto": monto,
                                     "Forma_Pago": metodo
                                 }).execute()
-
                         if 'id_pendiente_cargado' in st.session_state:
                             db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", st.session_state.id_pendiente_cargado).execute()
                             del st.session_state.id_pendiente_cargado
