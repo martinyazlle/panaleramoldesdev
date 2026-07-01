@@ -1731,13 +1731,14 @@ else:
                                         try:
                                             db.table("CAMBIOS").insert({
                                                 "Fecha": datetime.now().isoformat(),
+                                                "Usuario": st.session_state.get('usuario_actual', 'Administrador'), # <--- AGREGA ESTO
                                                 "Código": p['Código'],
                                                 "Nombre": p['Nombre'],
                                                 "Descripción": new_desc,
                                                 "Entra": int(new_cant) if new_tipo == 'ENTRA' else 0,
                                                 "Sale": int(new_cant) if new_tipo == 'SALE' else 0,
-                                                "existencia_ant": stock_viejo,      # Nombre nuevo
-                                                "existencia_actual": stock_nuevo    # Nombre nuevo
+                                                "existencia_ant": stock_viejo,
+                                                "existencia_actual": stock_nuevo
                                             }).execute()
                                             
                                             # 4. Marcar como procesado
@@ -1806,7 +1807,7 @@ else:
                                 "Entra": int(item['Cantidad']) if item['Tipo'] == 'ENTRA' else 0,
                                 "Sale": int(item['Cantidad']) if item['Tipo'] == 'SALE' else 0,
                                 "Estado": "PENDIENTE",
-                                "Usuario": st.session_state.get('usuario', 'Desconocido')
+                                "Usuario": st.session_state.get('usuario_actual', 'Desconocido') # <--- CAMBIA 'usuario' por 'usuario_actual'
                             }).execute()
                         st.success("✅ Enviado a revisión.")
                         st.session_state.lista_cambios = []
