@@ -1647,31 +1647,47 @@ else:
         st.session_state.df_prod = df_prod.copy()
 
         # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
-        # Definición limpia
         if st.session_state.rol == "Administrador":
-            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar"])
-            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar = tabs
+            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar", "✂️ Divisor"])
+            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar, tab_divisor = tabs
         else:
-            tabs = st.tabs(["🔍 Buscar", "🔄 Cambios"])
-            tab_buscar, tab_cambios = tabs
+            # Definimos solo las 3 pestañas y ponemos las otras como None
+            tabs = st.tabs(["🔍 Buscar", "🔄 Cambios", "✂️ Divisor"])
+            tab_buscar, tab_cambios, tab_divisor = tabs
+            tab_alta, tab_modificar, tab_importar = None, None, None
             
         # --- PESTAÑA BUSCAR (VISIBLE PARA TODOS) ---
         with tab_buscar:
-            st.subheader("Buscador de Productos")
-            termino = st.text_input("Buscar producto por nombre o ID:", key="busc_prod").lower()
+            st.subheader("🔍 Buscador de Productos")
             
-            if st.session_state.rol == "Administrador":
-                df_v = st.session_state.df_prod.copy()
+            # 1. Crear las opciones igual que en el carrito
+            opciones_productos = (st.session_state.df_prod['Nombre'] + " (ID: " + 
+                                 st.session_state.df_prod['ID_Producto'].astype(str) + ")").tolist()
+            
+            # 2. Usar el selectbox flexible
+            seleccion = st.selectbox(
+                "Buscar producto por nombre o código:",
+                options=opciones_productos,
+                index=None,
+                placeholder="Escriba para buscar...",
+                key="buscador_productos_tab"
+            )
+            
+            # 3. Lógica para filtrar el dataframe
+            if seleccion:
+                # Extraer el ID de la selección (el texto entre paréntesis)
+                id_seleccionado = seleccion.split("(ID: ")[1].replace(")", "")
+                df_filtrado = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_seleccionado]
             else:
-                cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
-                df_v = st.session_state.df_prod[cols_vendedor].copy()
+                # Si no hay selección, mostrar todo (o podrías mostrar vacío si prefieres)
+                df_filtrado = st.session_state.df_prod
 
-            if termino:
-                mask = (st.session_state.df_prod['Nombre'].str.lower().str.contains(termino)) | \
-                       (st.session_state.df_prod['ID_Producto'].str.lower().str.contains(termino))
-                df_v = df_v[mask]
-                
-            st.dataframe(df_v, use_container_width=True, hide_index=True)
+            # 4. Mostrar según el rol
+            if st.session_state.rol != "Administrador":
+                cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
+                df_filtrado = df_filtrado[cols_vendedor]
+
+            st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
 
         # --- PESTAÑA CAMBIOS (Mejorada) ---
         with tab_cambios:
@@ -1798,6 +1814,109 @@ else:
                     except Exception as e:
                         st.error(f"Error: {e}")
 
+        # --- PESTAÑA DIVISOR ---
+        with tab_divisor:
+            st.subheader("✂️ Divisor de Fardos")
+            
+            # 1. Definimos los patrones de fardo
+            patrones_fardo = [r'\bx12\b', r'\bx24\b', r'\bx30\b', 
+                              r'\bX12\b', r'\bX24\b', r'\bX30\b']
+            
+            regex_patron = '|'.join(patrones_fardo)
+            
+            # 2. Filtramos: Rubro LECHE + Stock > 0 + Que contenga el patrón exacto como palabra
+            df_filtrado_div = st.session_state.df_prod[
+                (st.session_state.df_prod['Rubro'] == 'LECHE') & 
+                (st.session_state.df_prod['Stock_Actual'] > 0) &
+                (st.session_state.df_prod['Nombre'].str.contains(regex_patron, regex=True, na=False))
+            ].copy()
+            
+            if df_filtrado_div.empty:
+                st.warning("No hay productos de 'LECHE' identificados como fardos (x12, x24, x30) con stock disponible.")
+            else:
+                opciones_prod = (df_filtrado_div['ID_Producto'].astype(str) + " - " + df_filtrado_div['Nombre']).tolist()
+                id_fardo_sel = st.selectbox("Seleccionar Fardo a dividir:", [""] + opciones_prod, key="div_fardo")
+                
+                if id_fardo_sel:
+                    # Guardamos el ID en sesión
+                    id_fardo = id_fardo_sel.split(" - ")[0]
+                    st.session_state.id_fardo_temp = id_fardo 
+                    
+                    # Guardamos la fila completa en sesión
+                    st.session_state.fila_fardo_temp = df_filtrado_div[df_filtrado_div['ID_Producto'].astype(str) == id_fardo].iloc[0]
+                    
+                    st.info(f"Fardo: {st.session_state.fila_fardo_temp['Nombre']} | Stock: {st.session_state.fila_fardo_temp['Stock_Actual']}")
+                    
+                    with st.form("form_divisor"):
+                        c1, c2 = st.columns(2)
+                        unidades = c1.number_input("¿Cuántas unidades trae el fardo?", min_value=1, value=24)
+                        id_cajita = c2.text_input("Código de la Cajita Individual:")
+                        
+                        # Usamos los datos de la sesión
+                        fila_fardo = st.session_state.fila_fardo_temp
+                        id_fardo = st.session_state.id_fardo_temp # <--- RECUPERAMOS EL ID AQUÍ
+                        
+                        costo_fardo = float(fila_fardo['Precio_Costo'])
+                        costo_unitario = costo_fardo / unidades
+                        precio_sugerido = ( (int((costo_unitario * 1.40) // 100) + 1) * 100 )
+                        
+                        st.write(f"Costo unitario: ${costo_unitario:,.2f} | Precio Sugerido: ${precio_sugerido:,.0f}")
+                        
+                        if st.form_submit_button("🚀 Confirmar División"):
+                            # --- VALIDACIÓN DE STOCK ---
+                            # Todo esto DEBE estar indentado bajo el if de arriba
+                            if int(fila_fardo['Stock_Actual']) <= 0:
+                                st.error(f"⚠️ ¡Error! El fardo '{fila_fardo['Nombre']}' no cuenta con existencias para dividir (Stock actual: 0).")
+                                st.stop() 
+                            
+                            # --- LÓGICA DE ACTUALIZACIÓN ---
+                            # Todo esto TAMBIÉN debe estar indentado bajo el if
+                            try:
+                                # Descontar 1 al fardo
+                                nuevo_stock_fardo = int(fila_fardo['Stock_Actual']) - 1
+                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", id_fardo).execute()
+                                
+                                # Sumar unidades a la cajita
+                                prod_cajita = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_cajita).execute().data
+                                if not prod_cajita:
+                                    st.error("¡Error! El código de la cajita no existe en la base de datos.")
+                                    st.stop()
+                                    
+                                stock_cajita_old = int(prod_cajita[0]['Stock_Actual'])
+                                db.table("PRODUCTOS").update({"Stock_Actual": stock_cajita_old + unidades}).eq("ID_Producto", id_cajita).execute()
+                                
+                                # --- REGISTRO EN CAMBIOS ---
+                                # Usamos st.session_state.usuario_actual
+                                usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                                
+                                db.table("CAMBIOS").insert({
+                                    "Fecha": datetime.now().isoformat(),
+                                    "Usuario": usuario_logueado, # <--- Aquí queda registrado tu nombre
+                                    "Código": id_fardo,
+                                    "Nombre": fila_fardo['Nombre'],
+                                    "Descripción": f"División de fardo: Se transformó en {unidades} unidades de {id_cajita}",
+                                    "Entra": 0, "Sale": 1,
+                                    "existencia_ant": int(fila_fardo['Stock_Actual']),
+                                    "existencia_actual": nuevo_stock_fardo
+                                }).execute()
+                                
+                                db.table("CAMBIOS").insert({
+                                    "Fecha": datetime.now().isoformat(),
+                                    "Usuario": usuario_logueado, # <--- Aquí también
+                                    "Código": id_cajita,
+                                    "Nombre": "Cajitas (División)",
+                                    "Descripción": f"Ingreso por división de fardo {id_fardo}",
+                                    "Entra": int(unidades), "Sale": 0,
+                                    "existencia_ant": stock_cajita_old,
+                                    "existencia_actual": stock_cajita_old + unidades
+                                }).execute()
+                                
+                                st.success(f"✅ ¡División realizada por {usuario_logueado}!")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Error al procesar la división: {e}")
+        
         # --- PESTAÑAS DE ADMINISTRADOR ---
         if st.session_state.rol == "Administrador":
             
