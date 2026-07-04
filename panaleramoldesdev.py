@@ -1660,37 +1660,48 @@ else:
             tab_buscar, tab_cambios, tab_divisor = tabs
             tab_alta, tab_modificar, tab_importar = None, None, None
             
-        # --- PESTAÑA BUSCAR (VISIBLE PARA TODOS) ---
+        # --- PESTAÑA BUSCAR (Versión Potenciada) ---
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
             
-            # 1. Crear las opciones igual que en el carrito
-            opciones_productos = (st.session_state.df_prod['Nombre'] + " (ID: " + 
-                                 st.session_state.df_prod['ID_Producto'].astype(str) + ")").tolist()
-            
-            # 2. Usar el selectbox flexible
-            seleccion = st.selectbox(
-                "Buscar producto por nombre o código:",
-                options=opciones_productos,
-                index=None,
-                placeholder="Escriba para buscar...",
-                key="buscador_productos_tab"
+            # 1. Buscador por texto
+            busqueda_texto = st.text_input(
+                "Escriba para filtrar por nombre o código:", 
+                placeholder="Ej: pampers, 779...",
+                key="busqueda_tab_buscar"
             )
             
-            # 3. Lógica para filtrar el dataframe
-            if seleccion:
-                # Extraer el ID de la selección (el texto entre paréntesis)
-                id_seleccionado = seleccion.split("(ID: ")[1].replace(")", "")
-                df_filtrado = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_seleccionado]
-            else:
-                # Si no hay selección, mostrar todo (o podrías mostrar vacío si prefieres)
-                df_filtrado = st.session_state.df_prod
+            # 2. Filtros (Rubro y Marca)
+            c1, c2 = st.columns(2)
+            rubros = ["Todos"] + st.session_state.df_prod['Rubro'].unique().tolist()
+            marcas = ["Todos"] + st.session_state.df_prod['Marca'].unique().tolist()
+            
+            filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_tab")
+            filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_tab")
+            
+            # 3. Aplicar filtros al DF
+            df_filtrado = st.session_state.df_prod.copy()
+            
+            # Filtro de texto (Nombre o ID)
+            if busqueda_texto:
+                busqueda_texto = busqueda_texto.lower()
+                mask = df_filtrado['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
+                       df_filtrado['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
+                df_filtrado = df_filtrado[mask]
+            
+            # Filtros de selección
+            if filtro_rubro != "Todos": 
+                df_filtrado = df_filtrado[df_filtrado['Rubro'] == filtro_rubro]
+            if filtro_marca != "Todos": 
+                df_filtrado = df_filtrado[df_filtrado['Marca'] == filtro_marca]
 
-            # 4. Mostrar según el rol
+            # 4. Ajuste de columnas según rol
             if st.session_state.rol != "Administrador":
                 cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
-                df_filtrado = df_filtrado[cols_vendedor]
+                # Verificamos que las columnas existan antes de filtrar para evitar errores
+                df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
 
+            # 5. Mostrar resultado
             st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
 
         # --- PESTAÑA CAMBIOS (Mejorada) ---
