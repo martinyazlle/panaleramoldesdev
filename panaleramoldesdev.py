@@ -654,6 +654,54 @@ else:
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar en la base de datos: {e}")
+
+    @st.dialog("➕ Nuevo Proveedor Rápido")
+    def abrir_alta_proveedor_rapida():
+        # Consultamos la base de datos dentro del diálogo para tener datos frescos
+        try:
+            response = db.table("PROVEEDORES").select("*").execute()
+            df_prov = pd.DataFrame(response.data)
+        except:
+            df_prov = pd.DataFrame()
+        
+        with st.form("form_nuevo_proveedor_rapido", clear_on_submit=True):
+            # Calculamos ID sugerido basándonos en la consulta actual
+            nuevo_id = str(len(df_prov) + 1).zfill(4)
+            st.info(f"ID Sugerido: {nuevo_id}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                razon_social = st.text_input("Razón Social")
+                cuit = st.text_input("CUIT (Formato: XX-XXXXXXXX-X)")
+                direccion = st.text_input("Dirección")
+            with col2:
+                telefono = st.text_input("Teléfono")
+                condicion = st.selectbox("Condición Fiscal", ["Responsable Inscripto", "Monotributo", "Exento"])
+            
+            rubros_seleccionados = st.multiselect("Asociar Rubros", LISTA_RUBROS)
+            
+            btn_guardar = st.form_submit_button("Guardar Proveedor")
+            
+            if btn_guardar:
+                if not re.match(r'^\d{2}-\d{8}-\d{1}$', cuit):
+                    st.error("Error: El CUIT debe tener formato XX-XXXXXXXX-X")
+                elif not df_prov.empty and cuit in df_prov['CUIT'].astype(str).values:
+                    st.error("Error: Ya existe un proveedor con ese CUIT.")
+                else:
+                    try:
+                        db.table("PROVEEDORES").insert({
+                            "ID_Proveedor": nuevo_id,
+                            "Razon_Social": razon_social,
+                            "Rubros_Asociados": ", ".join(rubros_seleccionados),
+                            "CUIT": cuit,
+                            "Condicion_Fiscal": condicion,
+                            "Direccion": direccion,
+                            "Telefono": telefono
+                        }).execute()
+                        st.success("✅ ¡Proveedor cargado exitosamente!")
+                        st.rerun() # Esto cierra el diálogo y refresca todo
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -2367,35 +2415,44 @@ else:
                     })
             st.session_state.txt_barcode = ""
 
-        # --- 3. SECCIÓN: DATOS DE FACTURA (MODIFICADA PARA VALIDACIÓN) ---
+        # --- 3. SECCIÓN: DATOS DE FACTURA (RESTAURADA CON FECHA Y BOTÓN) ---
         with st.expander("📄 Datos de la Factura Actual", expanded=True):
             # Verificación de duplicados
             df_hist_check = pd.DataFrame(db.table("COMPRAS_CABECERA").select("Nro_Factura").execute().data)
             facturas_existentes = df_hist_check['Nro_Factura'].tolist() if not df_hist_check.empty else []
-
-            c1, c2, c3 = st.columns([1, 1.5, 1])
+        
+            c1, c1_btn, c2, c3 = st.columns([1, 0.2, 1.5, 1])
+            
             with c1:
+                # Recuperamos tu lógica de índice original
                 prov_sel = st.selectbox("Proveedor", lista_proveedores, 
-                                        index=lista_proveedores.index(st.session_state.get("temp_prov", lista_proveedores[0])),
+                                        index=lista_proveedores.index(st.session_state.get("temp_prov", lista_proveedores[0])) 
+                                        if st.session_state.get("temp_prov") in lista_proveedores else 0,
                                         key="prov_main")
+                
+                # REINCORPORAMOS LA FECHA AQUÍ
                 fecha_factura = st.date_input("Fecha de Factura")
+            
+            with c1_btn:
+                st.write("") # Espaciador para alinear
+                st.write("") # Espaciador
+                if st.button("➕", help="Agregar nuevo proveedor"):
+                    abrir_alta_proveedor_rapida()
             
             with c2:
                 f1, _, f2 = st.columns([1, 0.2, 2])
                 f_punto = f1.text_input("00000", value=st.session_state.get("temp_punto", ""), max_chars=5)
                 f_nro = f2.text_input("00000000", value=st.session_state.get("temp_nro", ""), max_chars=8)
                 
-                # LÓGICA FLEXIBLE: 
-                # Si está vacío, asignamos el código de pre-carga
                 if not f_punto and not f_nro:
                     nro_fact_completo = "00000-00000000"
                 else:
                     nro_fact_completo = f"{f_punto.zfill(5)}-{f_nro.zfill(8)}"
                     
-                    # Solo validamos duplicados si NO es el código de pre-carga
                     if nro_fact_completo != "00000-00000000" and nro_fact_completo in facturas_existentes:
                         st.error(f"⚠️ La factura {nro_fact_completo} ya existe.")
                         nro_fact_completo = "DUPLICADA"
+                        
             with c3:
                 pago_compra = st.selectbox("Método de Pago", ["Contado", "Transferencia", "Cuenta Corriente"], key="pago_main")
 
