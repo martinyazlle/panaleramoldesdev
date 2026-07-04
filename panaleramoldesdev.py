@@ -2512,7 +2512,14 @@ else:
 
                 with st.container(border=True):
                     c_head, c_btn = st.columns([6, 1])
-                    c_head.write(f"**{item['nombre']}** | Rubro: {rubro}")
+                    
+                    # 1. Obtenemos el código desde p_info (la serie del producto en BD)
+                    # Ajusta 'Codigo' al nombre exacto de la columna en tu tabla de PRODUCTOS
+                    # Usamos directamente el ID que ya tenías en el carrito
+                    # .strip() elimina espacios al principio y al final automáticamente
+                    nombre_limpio = item['nombre'].strip()
+                    c_head.write(f"**{nombre_limpio}**  `{item['id']}` | Rubro: {rubro}")
+                    
                     if c_btn.button("🗑️ Eliminar", key=f"del_final_{i}"):
                         st.session_state.carrito_compra.pop(i)
                         st.rerun()
