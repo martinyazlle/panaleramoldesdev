@@ -1062,7 +1062,7 @@ else:
             if prod_buscado['Stock_Actual'] <= 0 and prod_buscado['Es_Stockeable'] == True:
                 st.warning(f"⚠️ El producto '{prod_buscado['Nombre']}' no se puede agregar porque no cuenta con stock.")
 
-        # 4. CARRITO (Versión Corregida)
+        # 4. CARRITO (Versión Final con Títulos ajustados)
         if st.session_state.carrito_vta:
             st.write("### 🛒 Detalle de la Venta")
             
@@ -1074,7 +1074,11 @@ else:
                 p_data = res_p.iloc[0]
                 
                 c1, c2, c3, c4, c5, c6 = st.columns([2, 1.2, 0.8, 1.2, 1, 0.5])
-                c1.write(f"**{p_data['Nombre']}**")
+                
+                # AJUSTE: Nombre en h4 (más grande) y Código en negrita (sin #)
+                with c1:
+                    st.markdown(f"#### {p_data['Nombre']}")
+                    st.markdown(f"<p style='font-size:14px;'><strong>{p_data['ID_Producto']}</strong></p>", unsafe_allow_html=True)
                 
                 # 1. Selector de Lista
                 lista_actual_producto = item.get('lista_local', global_val)
@@ -1092,7 +1096,7 @@ else:
                 # 2. Cantidad
                 n_cant = c3.number_input("Cant.", min_value=1, value=int(item['cantidad']), key=f"Q_{i}")
                 
-                # 3. Calcular el precio SUGERIDO (ANTES de usarlo en el input)
+                # 3. Calcular el precio SUGERIDO
                 if lista_item == "Automática (P1/P2)":
                     if n_cant == 1: col_p = 'Precio_1'
                     elif n_cant == 2: col_p = 'Precio_2'
@@ -1102,7 +1106,7 @@ else:
                 
                 precio_sugerido = float(p_data[col_p])
                 
-                # 4. Input Precio (El error de NameError ya no debería ocurrir)
+                # 4. Input Precio
                 n_prec = c4.number_input(
                     "Precio", 
                     value=precio_sugerido, 
