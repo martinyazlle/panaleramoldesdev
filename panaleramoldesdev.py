@@ -702,6 +702,21 @@ else:
                         st.rerun() # Esto cierra el diálogo y refresca todo
                     except Exception as e:
                         st.error(f"Error al guardar: {e}")
+
+    def resetear_compras():
+        # Lista de claves específicas del módulo COMPRAS
+        keys_a_limpiar = [
+            'carrito_compra', 'oc_en_edicion', 'temp_prov', 
+            'temp_pago', 'temp_punto', 'temp_nro', 'prod_compra_key'
+        ]
+        for key in keys_a_limpiar:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        # Aseguramos estados básicos
+        st.session_state.carrito_compra = []
+        st.session_state.txt_barcode = ""
+        st.rerun()
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -2288,7 +2303,12 @@ else:
     # MODULO: 📦 COMPRAS
     # =====================================================================
     elif menu == "📦 Compras":
-        st.header("📦 Registro de Compras (Entrada de Mercadería)")
+        # Layout superior idéntico al Punto de Venta
+        col_t1, col_t2 = st.columns([4, 1])
+        col_t1.header("📦 Registro de Compras (Entrada de Mercadería)")
+        
+        if col_t2.button("🧹 Limpiar Todo", type="secondary", use_container_width=True):
+            resetear_compras()
 
         # Diccionario de Márgenes
         MARGENES_RUBROS = {
