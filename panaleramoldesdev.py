@@ -9,6 +9,10 @@ import json
 import pydeck as pdk
 import uuid
 
+st.sidebar.write("Estado de conexión:")
+st.sidebar.write("URL configurada:", "SÍ" if os.getenv("SUPABASE_URL") else "NO")
+st.sidebar.write("KEY configurada:", "SÍ" if os.getenv("SUPABASE_KEY") else "NO")
+
 if st.button("Forzar recarga de datos"):
     if 'df_prod' in st.session_state:
         del st.session_state['df_prod']
@@ -1701,6 +1705,9 @@ else:
         try:
             data = db.table("PRODUCTOS").select("*").execute().data
             df_prod = pd.DataFrame(data)
+
+            st.write("Columnas recibidas:", df_prod.columns.tolist()) 
+            st.write("Primeras filas:", df_prod.head(2))
             
             # Carga de proveedores (ahora es global para el módulo)
             df_prov = pd.DataFrame(db.table("PROVEEDORES").select("Razon_Social").execute().data)
