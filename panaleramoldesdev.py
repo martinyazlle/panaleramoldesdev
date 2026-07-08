@@ -2063,16 +2063,11 @@ else:
             with tab_modificar:
                 st.subheader("✏️ Modificar Producto Completo")
                 
+                # PROTECCIÓN: Todo lo de esta pestaña debe estar dentro de este bloque
                 if not st.session_state.df_prod.empty:
                     opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
-                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
+                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones, key="select_prod_mod")
                     
-                    def asegurar_float(valor):
-                        try:
-                            return float(valor) if valor not in [None, ''] else 0.0
-                        except:
-                            return 0.0
-
                     if prod_sel:
                         id_sel = prod_sel.split(" - ")[0]
                         fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
@@ -2101,21 +2096,20 @@ else:
                                 n_p5 = st.number_input("Precio 5", value=asegurar_float(fila.get('Precio_5', 0)), format="%.2f")
                             
                             if st.form_submit_button("✅ Guardar Todos los Cambios"):
-                                # Función para limpiar campos de texto: si es "None" o vacío, devuelve None (nulo)
+                                # Definir funciones DENTRO o ANTES de la pestaña, 
+                                # pero asegúrate de que el bloque de ejecución esté aquí.
                                 def clean_text(val):
                                     if val is None or val == "" or str(val).lower() == "none":
                                         return None
                                     return str(val)
-
-                                # Función para asegurar número
+    
                                 def clean_num(val, is_float=False):
                                     try:
                                         if val in [None, '', 'None']: return 0.0 if is_float else 0
                                         return float(val) if is_float else int(val)
                                     except:
                                         return 0.0 if is_float else 0
-
-                                # Diccionario corregido
+    
                                 datos_update = {
                                     "Nombre": str(n_nom) if n_nom else "Sin nombre",
                                     "Rubro": clean_text(n_rub),
@@ -2133,14 +2127,10 @@ else:
                                     "Precio_5": clean_num(n_p5, True)
                                 }
                                 
+                                # ESTO debe estar indentado al mismo nivel que 'datos_update'
                                 try:
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
                                     st.success("¡Producto actualizado exitosamente!")
-                                    
-                                    # --- AQUÍ ESTÁ LA SOLUCIÓN ---
-                                    # Actualizamos el estado para que sepa que estamos en Modificar (índice 2)
-                                    st.session_state.tab_seleccionada = 2 
-                                    
                                     st.session_state.df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
                                     st.rerun()
                                 except Exception as e:
