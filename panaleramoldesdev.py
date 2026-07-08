@@ -1692,6 +1692,10 @@ else:
     elif menu == "📦 Productos":
         st.title("📦 Gestión de Productos")
 
+        # --- NUEVA LÍNEA PARA RECORDAR LA PESTAÑA ---
+        if 'tab_seleccionada' not in st.session_state:
+            st.session_state.tab_seleccionada = 0
+
         # 1. CARGA INICIAL DE DATOS NECESARIOS (PARA TODOS)
         try:
             data = db.table("PRODUCTOS").select("*").execute().data
@@ -1715,10 +1719,10 @@ else:
 
         # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
         if st.session_state.rol == "Administrador":
+            # Usamos el parámetro 'index' para que abra la última pestaña guardada
             tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar", "✂️ Divisor"])
             tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar, tab_divisor = tabs
         else:
-            # Definimos solo las 3 pestañas y ponemos las otras como None
             tabs = st.tabs(["🔍 Buscar", "🔄 Cambios", "✂️ Divisor"])
             tab_buscar, tab_cambios, tab_divisor = tabs
             tab_alta, tab_modificar, tab_importar = None, None, None
@@ -2130,16 +2134,15 @@ else:
                                 }
                                 
                                 try:
-                                    # Ejecutamos el update
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
                                     st.success("¡Producto actualizado exitosamente!")
                                     
-                                    # --- CAMBIO CLAVE AQUÍ ---
-                                    # No borres el df, mejor actualiza los datos internamente
-                                    # para que la app sepa que hubo un cambio sin perder la estructura.
-                                    st.session_state.df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
+                                    # --- AQUÍ ESTÁ LA SOLUCIÓN ---
+                                    # Actualizamos el estado para que sepa que estamos en Modificar (índice 2)
+                                    st.session_state.tab_seleccionada = 2 
                                     
-                                    st.rerun() # Esto recargará la página con el nuevo df_prod ya cargado
+                                    st.session_state.df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
+                                    st.rerun()
                                 except Exception as e:
                                     st.error(f"Error al actualizar: {e}")
                 else:
@@ -2704,6 +2707,9 @@ else:
     # =====================================================================
     elif menu == "👥 Vendedores":
         st.title("👥 Gestión de Vendedores")
+        
+        # --- RECARGA FORZADA ---
+        st.cache_data.clear() 
         
         # Carga de datos
         response = db.table("VENDEDORES").select("*").execute()
