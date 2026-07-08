@@ -1692,10 +1692,6 @@ else:
     elif menu == "📦 Productos":
         st.title("📦 Gestión de Productos")
 
-        # --- NUEVA LÍNEA PARA RECORDAR LA PESTAÑA ---
-        if 'tab_seleccionada' not in st.session_state:
-            st.session_state.tab_seleccionada = 0
-
         # 1. CARGA INICIAL DE DATOS NECESARIOS (PARA TODOS)
         try:
             data = db.table("PRODUCTOS").select("*").execute().data
@@ -1719,10 +1715,10 @@ else:
 
         # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
         if st.session_state.rol == "Administrador":
-            # Usamos el parámetro 'index' para que abra la última pestaña guardada
             tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar", "✂️ Divisor"])
             tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar, tab_divisor = tabs
         else:
+            # Definimos solo las 3 pestañas y ponemos las otras como None
             tabs = st.tabs(["🔍 Buscar", "🔄 Cambios", "✂️ Divisor"])
             tab_buscar, tab_cambios, tab_divisor = tabs
             tab_alta, tab_modificar, tab_importar = None, None, None
@@ -2063,15 +2059,38 @@ else:
             with tab_modificar:
                 st.subheader("✏️ Modificar Producto Completo")
                 
-                # PROTECCIÓN: Todo lo de esta pestaña debe estar dentro de este bloque
                 if not st.session_state.df_prod.empty:
                     opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
-                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones, key="select_prod_mod")
+                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
                     
+                    # Definición de funciones (pueden estar aquí arriba)
+                    def asegurar_float(valor):
+                        try:
+                            return float(valor) if valor not in [None, ''] else 0.0
+                        except:
+                            return 0.0
+            
+                    def cast_safe(valor, default=0):
+                        try:
+                            if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+                                return default
+                            return int(float(valor))
+                        except:
+                            return default
+                    
+                    # --- AQUÍ ESTÁ EL CAMBIO CRÍTICO ---
                     if prod_sel:
                         id_sel = prod_sel.split(" - ")[0]
+                        # PRIMERO definimos fila
                         fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
                         
+                        # LUEGO usamos fila para el blindaje
+                        val_stk = cast_safe(fila.get('Stock_Actual'))
+                        val_min = cast_safe(fila.get('Stock_Min'))
+                        val_max = cast_safe(fila.get('Stock_Max'))
+                        val_cos = float(fila.get('Precio_Costo', 0) or 0)
+                        
+                        # FINALMENTE abrimos el formulario
                         with st.form("form_mod_completo"):
                             c1, c2, c3 = st.columns(3)
                             with c1:
@@ -2083,9 +2102,9 @@ else:
                                 idx_prov = lista_proveedores.index(prov_actual) if prov_actual in lista_proveedores else 0
                                 n_prov = st.selectbox("Proveedor", options=lista_proveedores, index=idx_prov)
                             with c2:
-                                n_stk = st.number_input("Stock Actual", value=int(asegurar_float(fila.get('Stock_Actual', 0))))
-                                n_min = st.number_input("Stock Min", value=int(asegurar_float(fila.get('Stock_Min', 0))))
-                                n_max = st.number_input("Stock Max", value=int(asegurar_float(fila.get('Stock_Max', 0))))
+                                n_stk = st.number_input("Stock Actual", value=val_stk)
+                                n_min = st.number_input("Stock Min", value=val_min)
+                                n_max = st.number_input("Stock Max", value=val_max)
                                 n_img = st.text_input("URL Imagen", value=str(fila.get('Imagen', '')))
                             with c3:
                                 n_cos = st.number_input("Costo", value=asegurar_float(fila.get('Precio_Costo', 0)), format="%.2f")
@@ -2096,25 +2115,26 @@ else:
                                 n_p5 = st.number_input("Precio 5", value=asegurar_float(fila.get('Precio_5', 0)), format="%.2f")
                             
                             if st.form_submit_button("✅ Guardar Todos los Cambios"):
-                                # Definir funciones DENTRO o ANTES de la pestaña, 
-                                # pero asegúrate de que el bloque de ejecución esté aquí.
+                                # Función para limpiar campos de texto: si es "None" o vacío, devuelve None (nulo)
                                 def clean_text(val):
                                     if val is None or val == "" or str(val).lower() == "none":
                                         return None
                                     return str(val)
-    
+
+                                # Función para asegurar número
                                 def clean_num(val, is_float=False):
                                     try:
                                         if val in [None, '', 'None']: return 0.0 if is_float else 0
                                         return float(val) if is_float else int(val)
                                     except:
                                         return 0.0 if is_float else 0
-    
+
+                                # Diccionario corregido
                                 datos_update = {
                                     "Nombre": str(n_nom) if n_nom else "Sin nombre",
                                     "Rubro": clean_text(n_rub),
                                     "Marca": clean_text(n_mar),
-                                    "ID_Proveedor": n_prov,
+                                    "ID_Proveedor": clean_num(n_prov), # Lo pasamos por clean_num porque es bigint
                                     "Stock_Actual": clean_num(n_stk),
                                     "Stock_Min": clean_num(n_min),
                                     "Stock_Max": clean_num(n_max),
@@ -2127,14 +2147,15 @@ else:
                                     "Precio_5": clean_num(n_p5, True)
                                 }
                                 
-                                # ESTO debe estar indentado al mismo nivel que 'datos_update'
                                 try:
+                                    # Ejecutamos el update
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
                                     st.success("¡Producto actualizado exitosamente!")
-                                    st.session_state.df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
+                                    if 'df_prod' in st.session_state: del st.session_state['df_prod']
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"Error al actualizar: {e}")
+                                    st.error(f"Error al actualizar en Supabase: {e}")
+                                    st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
                 else:
                     st.info("No hay productos para modificar.")
 
@@ -2697,9 +2718,6 @@ else:
     # =====================================================================
     elif menu == "👥 Vendedores":
         st.title("👥 Gestión de Vendedores")
-        
-        # --- RECARGA FORZADA ---
-        st.cache_data.clear() 
         
         # Carga de datos
         response = db.table("VENDEDORES").select("*").execute()
