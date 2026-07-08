@@ -2116,7 +2116,7 @@ else:
                                     "Nombre": str(n_nom) if n_nom else "Sin nombre",
                                     "Rubro": clean_text(n_rub),
                                     "Marca": clean_text(n_mar),
-                                    "ID_Proveedor": clean_num(n_prov), # Lo pasamos por clean_num porque es bigint
+                                    "ID_Proveedor": n_prov,
                                     "Stock_Actual": clean_num(n_stk),
                                     "Stock_Min": clean_num(n_min),
                                     "Stock_Max": clean_num(n_max),
@@ -2133,11 +2133,15 @@ else:
                                     # Ejecutamos el update
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
                                     st.success("¡Producto actualizado exitosamente!")
-                                    if 'df_prod' in st.session_state: del st.session_state['df_prod']
-                                    st.rerun()
+                                    
+                                    # --- CAMBIO CLAVE AQUÍ ---
+                                    # No borres el df, mejor actualiza los datos internamente
+                                    # para que la app sepa que hubo un cambio sin perder la estructura.
+                                    st.session_state.df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
+                                    
+                                    st.rerun() # Esto recargará la página con el nuevo df_prod ya cargado
                                 except Exception as e:
-                                    st.error(f"Error al actualizar en Supabase: {e}")
-                                    st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
+                                    st.error(f"Error al actualizar: {e}")
                 else:
                     st.info("No hay productos para modificar.")
 
