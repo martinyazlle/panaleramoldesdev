@@ -8,6 +8,7 @@ import math
 import json
 import pydeck as pdk
 import uuid
+import os
 
 if st.button("Forzar recarga de datos"):
     if 'df_prod' in st.session_state:
@@ -1701,10 +1702,6 @@ else:
         try:
             data = db.table("PRODUCTOS").select("*").execute().data
             df_prod = pd.DataFrame(data)
-
-            st.write("Columnas recibidas:", df_prod.columns.tolist()) 
-            st.write("Primeras filas:", df_prod.head(2))
-            st.write("Datos brutos obtenidos:", data[:2])
             
             # Carga de proveedores (ahora es global para el módulo)
             df_prov = pd.DataFrame(db.table("PROVEEDORES").select("Razon_Social").execute().data)
@@ -2072,36 +2069,30 @@ else:
                     opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
                     prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
                     
-                    # Definición de funciones (pueden estar aquí arriba)
-                    def asegurar_float(valor):
-                        try:
-                            return float(valor) if valor not in [None, ''] else 0.0
-                        except:
-                            return 0.0
-            
-                    def cast_safe(valor, default=0):
-                        try:
-                            # Si es None, NaN o un string vacío, devolvemos el valor por defecto
-                            if valor is None or pd.isna(valor) or str(valor).strip() == "":
-                                return default
-                            # Intentamos convertir a float primero para manejar strings numéricos
-                            return int(float(valor))
-                        except (ValueError, TypeError):
+                    # --- AQUÍ DEFINES LAS FUNCIONES UNA SOLA VEZ ---
+                    def get_safe(key, fila, default=0, is_float=False):
+                        val = fila.get(key)
+                        if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
                             return default
-                    
-                    # --- AQUÍ ESTÁ EL CAMBIO CRÍTICO ---
+                        return float(val) if is_float else int(float(val))
+            
+                    # --- CAMBIO CRÍTICO: BLOQUE DE LECTURA SEGURA ---
                     if prod_sel:
                         id_sel = prod_sel.split(" - ")[0]
-                        # PRIMERO definimos fila
                         fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
                         
-                        # LUEGO usamos fila para el blindaje
-                        val_stk = cast_safe(fila.get('Stock_Actual'))
-                        val_min = cast_safe(fila.get('Stock_Min'))
-                        val_max = cast_safe(fila.get('Stock_Max'))
-                        val_cos = float(fila.get('Precio_Costo', 0) or 0)
+                        # Asignamos usando la función segura
+                        val_stk = get_safe('Stock_Actual', fila, 0)
+                        val_min = get_safe('Stock_Min', fila, 0)
+                        val_max = get_safe('Stock_Max', fila, 0)
+                        val_cos = get_safe('Precio_Costo', fila, 0.0, is_float=True)
                         
-                        # FINALMENTE abrimos el formulario
+                        # Manejo del proveedor (que puede ser NULL)
+                        prov_actual = fila.get('ID_Proveedor')
+                        if prov_actual is None or pd.isna(prov_actual):
+                            prov_actual = "" 
+                        
+                        # FINALMENTE abrimos el formulario con los valores ya saneados
                         with st.form("form_mod_completo"):
                             c1, c2, c3 = st.columns(3)
                             with c1:
