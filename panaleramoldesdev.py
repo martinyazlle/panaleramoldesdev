@@ -10,11 +10,6 @@ import pydeck as pdk
 import uuid
 import os
 
-if st.button("Forzar recarga de datos"):
-    if 'df_prod' in st.session_state:
-        del st.session_state['df_prod']
-    st.rerun()
-
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
 @st.cache_resource
