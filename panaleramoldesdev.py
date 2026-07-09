@@ -1106,10 +1106,11 @@ else:
 
         col_bus1, col_bus2 = st.columns([2, 1])
         
-        col_bus1.selectbox(
+        # Cambiamos selectbox por multiselect
+        seleccion = col_bus1.multiselect(
             "Buscar por nombre o código", 
             options=opciones_productos, 
-            index=None, 
+            max_selections=1, # Esto fuerza a que se comporte como un selectbox simple
             placeholder="Escriba para buscar producto...",
             key="prod_manual_key",
             on_change=procesar_seleccion_manual 
