@@ -188,7 +188,7 @@ else:
             st.warning(f"¡Atención! Hay {df_f['Cliente_Full'].str.contains('Sin Nombre').sum()} ventas con 'Sin Nombre'. Esto puede estar afectando tus filtros.")
 
         # 4. Mostrar Tabla Principal y Sumatoria
-        st.dataframe(df_f[['ID_Venta', 'Fecha', 'Cliente_Full', 'Vendedor_Full', 'Total', 'Forma_Pago']], use_container_width=True)
+        st.dataframe(df_f[['ID_Venta', 'Fecha', 'Cliente_Full', 'Vendedor_Full', 'Total', 'Forma_Pago']], width='stretch')
         st.metric("Total Acumulado Filtrado", f"${df_f['Total'].sum():,.2f}")
 
         # 5. Detalle de Venta
@@ -802,9 +802,9 @@ else:
                 query = st.text_input("Buscar por nombre, apellido, DNI, CUIT, teléfono o dirección...")
                 if query:
                     mask = (df_clientes.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1))
-                    st.dataframe(df_clientes[mask], use_container_width=True)
+                    st.dataframe(df_clientes[mask], width='stretch')
                 else:
-                    st.dataframe(df_clientes, use_container_width=True)
+                    st.dataframe(df_clientes, width='stretch')
             
         with tab_nuevo:
             with st.form("form_nuevo_cliente"):
@@ -948,7 +948,7 @@ else:
     if menu == "🛒 Punto de Venta":
         col_t1, col_t2 = st.columns([4, 1])
         col_t1.header("🚀 Venta Rápida - Pañalera Moldes")
-        if col_t2.button("🧹 Limpiar Todo", type="secondary", use_container_width=True):
+        if col_t2.button("🧹 Limpiar Todo", type="secondary", width='stretch'):
             resetear_punto_venta()
         # 1.5. BOTÓN PARA VER PENDIENTES (Adaptado a Supabase)
         @st.dialog("Ventas Pendientes")
@@ -1001,7 +1001,7 @@ else:
                 st.error(f"Error al leer pendientes: {e}")
 
         # Ubicación del botón
-        if st.button("📂 VER PENDIENTES", use_container_width=True):
+        if st.button("📂 VER PENDIENTES", width='stretch'):
             abrir_pendientes()
 
         # 1. CARGA DE DATOS DESDE SUPABASE
@@ -1332,7 +1332,7 @@ else:
             col_f1, col_f2 = st.columns(2)
 
             with col_f1:
-                if st.button("🏁 FINALIZAR Y REGISTRAR VENTA", use_container_width=True, type="primary"):
+                if st.button("🏁 FINALIZAR Y REGISTRAR VENTA", width='stretch', type="primary"):
                     # 0. Verificación de sumas
                     suma_pagos = sum(float(p["monto"]) for p in st.session_state.pagos_split)
                     if abs(suma_pagos - total_final_vta) > 0.01:
@@ -1459,7 +1459,7 @@ else:
                         st.error(f"Error al registrar: {e}")
 
             with col_f2:
-                if st.button("⏳ GUARDAR COMO PENDIENTE", use_container_width=True):
+                if st.button("⏳ GUARDAR COMO PENDIENTE", width='stretch'):
                     import json
                     import re # Asegúrate de importar re al principio de tu archivo
                     
@@ -1569,7 +1569,7 @@ else:
         df_f['Faltante_Max'] = (df_f['Stock_Max'] - df_f['Stock_Actual']).clip(lower=0)
         
         # Mostrar tabla
-        st.dataframe(df_f[['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']], use_container_width=True)
+        st.dataframe(df_f[['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']], width='stretch')
         
         # 3. Acciones (Exportación)
         col_exp1, col_exp2 = st.columns(2)
@@ -1766,7 +1766,7 @@ else:
                 df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
 
             # 5. Mostrar resultado
-            st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
+            st.dataframe(df_filtrado, width='stretch', hide_index=True)
 
         # --- PESTAÑA CAMBIOS (Mejorada) ---
         with tab_cambios:
@@ -1795,7 +1795,7 @@ else:
                                 
                                 # Botones alineados en el mismo formulario
                                 btn_col1, btn_col2 = st.columns(2)
-                                if btn_col1.form_submit_button("💾 Aprobar y Procesar", use_container_width=True):
+                                if btn_col1.form_submit_button("💾 Aprobar y Procesar", width='stretch'):
                                     # 1. Obtener datos actuales
                                     prod_data = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", p['Código']).execute().data
                                     
@@ -1829,7 +1829,7 @@ else:
                                         except Exception as e:
                                             st.error(f"Error al insertar en CAMBIOS: {e}")
                                 
-                                if btn_col2.form_submit_button("❌ Rechazar", use_container_width=True):
+                                if btn_col2.form_submit_button("❌ Rechazar", width='stretch'):
                                     db.table("PRE_CAMBIOS").update({"Estado": "RECHAZADO"}).eq("id", p['id']).execute()
                                     st.rerun()
                 else:
@@ -2231,7 +2231,7 @@ else:
                                             busqueda_prov.lower() in str(row['CUIT']).lower() or 
                                             busqueda_prov.lower() in str(row['Rubros_Asociados']).lower(), axis=1)
                 ]
-            st.dataframe(df_filtrado, use_container_width=True)
+            st.dataframe(df_filtrado, width='stretch')
             
         with tab2:
             with st.form("nuevo_prov", clear_on_submit=True):
@@ -2322,7 +2322,7 @@ else:
         col_t1, col_t2 = st.columns([4, 1])
         col_t1.header("📦 Registro de Compras (Entrada de Mercadería)")
         
-        if col_t2.button("🧹 Limpiar Todo", type="secondary", use_container_width=True):
+        if col_t2.button("🧹 Limpiar Todo", type="secondary", width='stretch'):
             resetear_compras()
 
         # Diccionario de Márgenes
@@ -2372,7 +2372,7 @@ else:
 
             with tab_facturas:
                 df_hist = pd.DataFrame(db.table("COMPRAS_CABECERA").select("*").execute().data)
-                if not df_hist.empty: st.dataframe(df_hist, use_container_width=True)
+                if not df_hist.empty: st.dataframe(df_hist, width='stretch')
                 else: st.info("No hay facturas.")
 
             with tab_ordenes:
@@ -2383,7 +2383,7 @@ else:
                     if oc_sel != "-- Seleccionar --":
                         id_oc = oc_sel.split(" - ")[0]
                         det_oc = pd.DataFrame(db.table("DETALLE_ORDENES").select("*").eq("ID_Compra", id_oc).execute().data)
-                        st.dataframe(det_oc, use_container_width=True)
+                        st.dataframe(det_oc, width='stretch')
                         if st.button("✏️ PROCESAR / EDITAR ORDEN"):
                             st.session_state.oc_en_edicion = id_oc
                             
@@ -2735,7 +2735,7 @@ else:
             st.subheader("Personal de Ventas Activo")
             # Filtro directo sobre el DataFrame de Supabase
             df_activos = df_vend[df_vend['Estado'] == "Activo"]
-            st.dataframe(df_activos, use_container_width=True, hide_index=True)
+            st.dataframe(df_activos, width='stretch', hide_index=True)
             
         # MÓDULO VENDEDORES: Pestaña Nuevo Vendedor
         with tab2:
@@ -2921,7 +2921,7 @@ else:
                 # Renderizamos solo esas columnas y ocultamos el índice
                 st.dataframe(
                     df_filtrado[columnas_a_mostrar], 
-                    use_container_width=True, 
+                    width='stretch', 
                     hide_index=True  # Esto oculta el número de fila a la izquierda
                 )
             else:
