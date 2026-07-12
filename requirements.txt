@@ -1,6 +1,6 @@
-streamlit==1.40.0
+streamlit
 supabase
-pandas==2.2.0
+pandas
 xlsxwriter
 pytz
 pydeck
