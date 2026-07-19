@@ -1161,12 +1161,12 @@ else:
                             st.caption(f"👤 {v['Cliente']} | 👔 {v['Vendedor']}")
                             
                             if st.button("📥 Cargar", key=f"recup_{v['ID_Pendiente']}"):
-                                # ... (tu lógica de carga se mantiene igual)
                                 st.session_state.id_pendiente_cargado = v['ID_Pendiente']
                                 st.session_state.carrito_vta = json.loads(v['Detalle_JSON'])
                                 st.session_state.pagos_split = json.loads(v.get('Pagos_JSON', '[{"metodo": "Efectivo", "monto": 0.0}]'))
                                 st.session_state.cliente_recuperado = v['Cliente']
                                 st.session_state.id_cliente_recuperado = v.get('ID_Cliente_Pendiente', "0")
+                                st.session_state.vendedor_recuperado = str(v.get('Vendedor', '1'))
                                 st.session_state.tipo_entrega = v.get('Forma_Entrega', 'Mostrador')
                                 st.session_state.direccion_entrega = v.get('Direccion_Entrega', 'N/A')
                                 st.session_state.link_maps_entrega = v.get('Link_Maps_Entrega', 'N/A')
@@ -1259,8 +1259,39 @@ else:
                 if 'id_cliente_recuperado' in st.session_state:
                     del st.session_state.id_cliente_recuperado
 
-            # Vendedor ahora en c4 (columna nueva)
-            vendedor_sel = c4.selectbox("👔 Vendedor", df_vend['Nombre'].tolist())
+            # --- 🔥 MAPEO DINÁMICO DE VENDEDOR EN C4 (CON RECUPERACIÓN) ---
+            vendedor_id_final = "1" # Fallback por defecto si no hay datos
+            if 'df_vend' in locals() and not df_vend.empty:
+                # Creamos un diccionario {ID_Vendedor: "Nombre Apellido"}
+                dict_vendedores = {
+                    str(row['ID_Vendedor']): f"{row['Nombre']} {row['Apellido']}" 
+                    for _, row in df_vend.iterrows()
+                }
+                
+                lista_opciones = list(dict_vendedores.keys())
+                
+                # 🔥 Lógica para pre-seleccionar el vendedor recuperado
+                idx_vendedor = 0
+                if 'vendedor_recuperado' in st.session_state:
+                    id_recup = st.session_state.vendedor_recuperado
+                    if id_recup in lista_opciones:
+                        idx_vendedor = lista_opciones.index(id_recup)
+                    # Lo eliminamos para que afecte solo a esta carga y no quede fijo en las próximas ventas
+                    del st.session_state.vendedor_recuperado
+
+                # El selectbox opera sobre los IDs (claves) pero muestra los nombres legibles
+                vendedor_id_sel = c4.selectbox(
+                    "👔 Vendedor", 
+                    options=lista_opciones, 
+                    format_func=lambda x: dict_vendedores[x],
+                    index=idx_vendedor, # <-- Forzamos el índice recuperado
+                    key="pos_vendedor_selector_dinamico"
+                )
+                if vendedor_id_sel:
+                    vendedor_id_final = str(vendedor_id_sel)
+            else:
+                # Fallback visual clásico si df_vend viniera vacío
+                c4.selectbox("👔 Vendedor", options=["1"], format_func=lambda x: "Vendedor Genérico")
             
             # Lista ahora en c3
             def cambiar_lista_global():
@@ -1549,13 +1580,14 @@ else:
                         turno_res = db.table("CONTROL_TURNOS").select("ID_Turno").eq("Estado", "Abierto").maybe_single().execute()
                         id_turno_val = turno_res.data['ID_Turno'] if (turno_res and turno_res.data) else "SIN_TURNO"
 
-                        # 2. Registrar Cabecera (AÑADIDO ID_Vendedor)
+                        # 2. Registrar Cabecera (AÑADIDO ID_Vendedor DINÁMICO)
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
                         db.table("VENTAS_CABECERA").insert({
                             "ID_Venta": id_v,
                             "Fecha": f,
                             "ID_Cliente": id_cliente_final,
-                            "ID_Vendedor": st.session_state.get("id_vendedor", "1"), # <--- CORRECCIÓN AQUÍ
+                            # 🔥 CORRECCIÓN AQUÍ: Guardamos el ID del vendedor que se seleccionó arriba en la interfaz
+                            "ID_Vendedor": vendedor_id_final, 
                             "Forma_Pago": desglose_pagos,
                             "Total": total_final_vta,
                             "Forma_Entrega": st.session_state.tipo_entrega,
@@ -1665,7 +1697,8 @@ else:
                             "Hora": datetime.now().strftime('%H:%M:%S'),
                             "Cliente": cliente_nombre_final,
                             "ID_Cliente_Pendiente": id_cliente_final,
-                            "Vendedor": vendedor_sel,
+                            # 🔥 CORRECCIÓN AQUÍ: Cambiamos 'vendedor_sel' por 'vendedor_id_final'
+                            "Vendedor": vendedor_id_final,
                             "Metodo_Pago": desglose_pagos,
                             "Pagos_JSON": json.dumps(st.session_state.pagos_split),
                             "Detalle_JSON": json.dumps(st.session_state.carrito_vta),
@@ -1678,7 +1711,7 @@ else:
                             "Longitud": lng
                         }
 
-                        # --- LA LOGICA DE DETECCIÓN ---
+                        # --- LA LÓGICA DE DETECCIÓN ---
                         if 'id_pendiente_cargado' in st.session_state and st.session_state.id_pendiente_cargado:
                             # Si existe el ID, actualizamos el registro existente
                             db.table("VENTAS_PENDIENTES") \
