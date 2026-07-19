@@ -763,12 +763,12 @@ else:
             # Agregamos "📈 Reporte de Utilidades" a la lista
             opciones_disponibles.extend([
                 "🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", 
-                "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
+                "⚙️ Configuración Pagos", "📦 Productos",
                 "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", 
                 "⚙️ Auditoría", "📈 Reporte de Utilidades" # <--- AQUÍ LO AGREGAMOS
             ])
         elif st.session_state.rol == "Vendedor":
-            opciones_disponibles.extend(["🛒 Punto de Venta", "📦 Productos", "👥 Clientes"])
+            opciones_disponibles.extend(["🛒 Punto de Venta", "🚚 Gestión de Repartos", "📦 Productos", "👥 Clientes"])
         
         menu = st.selectbox("Menú Principal", opciones_disponibles)
         
@@ -1726,7 +1726,6 @@ else:
     if menu == "🚚 Gestión de Repartos":
         
         # Obtenemos ventas pendientes de reparto
-        # NOTA: Asegúrate de que las columnas existan en VENTAS_PENDIENTES
         ventas_reparto = db.table("VENTAS_PENDIENTES") \
                         .select("*") \
                         .eq("Forma_Entrega", "Reparto") \
@@ -1746,40 +1745,43 @@ else:
             st.markdown(f"## 🗺️ Planificación de Repartos ({total_general})")
             st.divider()
             
+            # Recuperamos el rol del usuario actual
+            rol_usuario = st.session_state.get('rol', 'Vendedor')
+            
             # 3. Agrupamos por fecha
             for fecha, grupo in df.groupby('Fecha_Entrega'):
                 # Título del día con su propio contador entre paréntesis
                 st.subheader(f"📅 {fecha} ({len(grupo)})")
                 
-                # --- AQUÍ EMPIEZA LA MODIFICACIÓN ---
-                # Usamos una clave única basada en la fecha para que no haya conflictos
-                with st.expander(f"⚙️ Configurar Origen para {fecha}"):
-                    opciones = {"Pañalera (Local)": (-24.793734909695726, -65.42769672376464), "Otro (Link de Maps)": "link"}
-                    sel_origen = st.selectbox("¿Desde dónde sale el reparto?", list(opciones.keys()), key=f"sel_{fecha}")
-                    
-                    if sel_origen == "Otro (Link de Maps)":
-                        link_maps = st.text_input("Pega el link de Google Maps aquí:")
-                        if link_maps:
-                            coords = extraer_coords_desde_link(link_maps)
-                            if coords:
-                                st.success(f"Coordenadas detectadas: {coords}")
-                                punto_partida = coords
-                            else:
-                                st.error("No pude leer el link. Asegúrate de copiarlo desde el botón 'Compartir' de Google Maps.")
-                                punto_partida = (-24.7825, -65.4111) # Default
-                    else:
-                        punto_partida = opciones[sel_origen]
+                # --- CONTROL DE ACCESO POR ROL ---
+                # Solo el Administrador puede configurar el origen y generar el diagrama optimizado
+                if rol_usuario == "Administrador":
+                    with st.expander(f"⚙️ Configurar Origen para {fecha}"):
+                        opciones = {"Pañalera (Local)": (-24.793734909695726, -65.42769672376464), "Otro (Link de Maps)": "link"}
+                        sel_origen = st.selectbox("¿Desde dónde sale el reparto?", list(opciones.keys()), key=f"sel_{fecha}")
+                        
+                        if sel_origen == "Otro (Link de Maps)":
+                            link_maps = st.text_input("Pega el link de Google Maps aquí:")
+                            if link_maps:
+                                coords = extraer_coords_desde_link(link_maps)
+                                if coords:
+                                    st.success(f"Coordenadas detectadas: {coords}")
+                                    punto_partida = coords
+                                else:
+                                    st.error("No pude leer el link. Asegúrate de copiarlo desde el botón 'Compartir' de Google Maps.")
+                                    punto_partida = (-24.7825, -65.4111) # Default
+                        else:
+                            punto_partida = opciones[sel_origen]
 
-                # Botón de optimización (Ahora usa 'punto_partida' definido arriba)
-                if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
-                    st.session_state[f"mostrar_diagrama_{fecha}"] = True
+                    # Botón de optimización
+                    if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
+                        st.session_state[f"mostrar_diagrama_{fecha}"] = True
+                    
+                    # Si la bandera es True, mostramos el mapa interactivo
+                    if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
+                        generar_diagrama_optimizada(grupo, punto_partida, fecha)
                 
-                # Si la bandera es True, mostramos la función SIEMPRE (para que el formulario sobreviva)
-                if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
-                    generar_diagrama_optimizada(grupo, punto_partida, fecha)
-                # --- AQUÍ TERMINA LA MODIFICACIÓN ---
-                
-                # 3. Iteramos sobre los repartos de ESE día
+                # 3. Iteramos sobre los repartos de ESE día (Visible para TODOS los roles)
                 for _, v in grupo.iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([2, 2, 1])
