@@ -718,6 +718,22 @@ else:
         st.session_state.carrito_compra = []
         st.session_state.txt_barcode = ""
         st.rerun()
+
+    def log_auditoria(tabla, accion, id_entidad, detalles, usuario="Martin"):
+        """
+        Registra automáticamente el movimiento en la tabla de Auditoría.
+        """
+        try:
+            db.table("AUDITORIA").insert({
+                "Tabla_Afectada": tabla,
+                "Accion": accion,
+                "ID_Entidad": str(id_entidad),
+                "Detalles": detalles,
+                "Usuario": usuario
+            }).execute()
+        except Exception as e:
+            # Forzamos a que Streamlit nos muestre el error real en pantalla si llega a fallar
+            st.error(f"🚨 Error crítico al guardar en auditoría: {e}")
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -728,7 +744,7 @@ else:
         "COLONIA", "CREMA", "CUCHARAS", "DESCONGESTIONADORES NASALES", 
         "ESPONJA", "HIGIENE BUCAL", "HISOPOS", "JABON", 
         "LECHE", "LIMPIEZA ROPA", "MAMADERA", "MOCHILA MATERNAL", "MORDILLOS", 
-        "OLEO CALCAREO", "PAÑALES", "PLATOS", "PROTECTOR MAMARIO", 
+        "OLEO CALCAREO", "PAÑALES", "PAÑALES ADULTOS", "PLATOS", "PROTECTOR MAMARIO", 
         "SACALECHES", "SEGURIDAD", "SHAMPOO", "TALCO", 
         "TETINAS", "TIJERAS", "TOALLITAS FEMENINAS", 
         "TOALLITAS HUMEDAS", "VASOS"
@@ -749,7 +765,7 @@ else:
                 "🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", 
                 "⚙️ Configuración Pagos", "🚚 Gestión de Repartos", "📦 Productos",
                 "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", 
-                "📈 Estadísticas", "📈 Reporte de Utilidades" # <--- AQUÍ LO AGREGAMOS
+                "⚙️ Auditoría", "📈 Reporte de Utilidades" # <--- AQUÍ LO AGREGAMOS
             ])
         elif st.session_state.rol == "Vendedor":
             opciones_disponibles.extend(["🛒 Punto de Venta", "📦 Productos", "👥 Clientes"])
@@ -840,10 +856,45 @@ else:
                             "Link_Direccion_1": link1, "Link_Direccion_2": link2,
                             "Link_Direccion_3": link3, "Zona": zona, "Tipo_Cliente": tipo
                         }
-                        db.table("CLIENTES").insert(nuevo_cliente).execute()
-                        st.success("✅ Cliente cargado!")
-                        st.rerun()
-
+                        
+                        try:
+                            # 1. Insertamos el cliente y capturamos la respuesta de Supabase
+                            resultado = db.table("CLIENTES").insert(nuevo_cliente).execute()
+                            
+                            # Obtener el ID generado (asumiendo que tu columna clave primaria se llama 'ID_Cliente' o 'id')
+                            id_cliente_generado = "N/A"
+                            if resultado.data:
+                                # Buscamos la columna ID que use tu tabla (cambiala por 'id' si está en minúsculas)
+                                id_cliente_generado = resultado.data[0].get('ID_Cliente', resultado.data[0].get('id', 'N/A'))
+                            
+                            # 2. Recuperamos el usuario logueado
+                            usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                            
+                            # 3. 🔥 LOG DE AUDITORÍA (Alta de Cliente)
+                            log_auditoria(
+                                tabla="CLIENTES",
+                                accion="INSERT",
+                                id_entidad=id_cliente_generado,
+                                detalles={
+                                    "operacion": "Alta de Cliente",
+                                    "datos_cliente": {
+                                        "nombre_completo": f"{apellido.upper()}, {nombre.upper()}",
+                                        "telefono": telefono,
+                                        "dni_cuit": cuit if cuit else dni,
+                                        "zona": zona,
+                                        "tipo_cliente": tipo,
+                                        "direccion_principal": dir1.upper()
+                                    }
+                                },
+                                usuario=usuario_logueado
+                            )
+                            
+                            st.success("✅ Cliente cargado!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error al guardar el cliente o registrar auditoría: {e}")
+                            
         if tab_modificar is not None:
             with tab_modificar:
                 st.subheader("Modificar Cliente Existente")
@@ -910,25 +961,56 @@ else:
             
                     # ACCIÓN DE GUARDAR (FUERA DEL FORM)
                     if guardar_btn:
-                        db.table("CLIENTES").update({
-                            "Nombre": str(nuevo_nombre or "").upper(),
-                            "Apellido": (nuevo_apellido or "").upper(),
-                            "DNI": nuevo_dni,
-                            "Razón Social": (nueva_razon or "").upper(),
-                            "CUIT": nuevo_cuit,
-                            "Telefono": nuevo_telefono,
-                            "Direccion_1": (nuevo_dir1 or "").upper(),
-                            "Link_Direccion_1": nuevo_link1,
-                            "Direccion_2": (nuevo_dir2 or "").upper(),
-                            "Link_Direccion_2": nuevo_link2,
-                            "Direccion_3": (nuevo_dir3 or "").upper(),
-                            "Link_Direccion_3": nuevo_link3,
-                            "Observaciones": nueva_obs,
-                            "Zona": input_zona,
-                            "Tipo_Cliente": input_tipo
-                        }).eq("ID_Cliente", int(id_modificar)).execute()
-                        st.success("Guardado")
-                        st.rerun()
+                        usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                        
+                        try:
+                            # 1. Ejecutamos la actualización
+                            db.table("CLIENTES").update({
+                                "Nombre": str(nuevo_nombre or "").upper(),
+                                "Apellido": (nuevo_apellido or "").upper(),
+                                "DNI": nuevo_dni,
+                                "Razón Social": (nueva_razon or "").upper(),
+                                "CUIT": nuevo_cuit,
+                                "Telefono": nuevo_telefono,
+                                "Direccion_1": (nuevo_dir1 or "").upper(),
+                                "Link_Direccion_1": nuevo_link1,
+                                "Direccion_2": (nuevo_dir2 or "").upper(),
+                                "Link_Direccion_2": nuevo_link2,
+                                "Direccion_3": (nuevo_dir3 or "").upper(),
+                                "Link_Direccion_3": nuevo_link3,
+                                "Observaciones": nueva_obs,
+                                "Zona": input_zona,
+                                "Tipo_Cliente": input_tipo
+                            }).eq("ID_Cliente", int(id_modificar)).execute()
+                            
+                            # 2. 🔥 LOG DE AUDITORÍA (Modificación de Cliente)
+                            log_auditoria(
+                                tabla="CLIENTES",
+                                accion="UPDATE",
+                                id_entidad=id_modificar,
+                                detalles={
+                                    "operacion": "Modificar Cliente",
+                                    "antes": {
+                                        "nombre_completo": f"{fila.get('Apellido')}, {fila.get('Nombre')}",
+                                        "telefono": fila.get('Telefono'),
+                                        "zona": fila.get('Zona'),
+                                        "direccion_1": fila.get('Direccion_1')
+                                    },
+                                    "despues": {
+                                        "nombre_completo": f"{nuevo_apellido.upper()}, {nuevo_nombre.upper()}",
+                                        "telefono": nuevo_telefono,
+                                        "zona": input_zona,
+                                        "direccion_1": nuevo_dir1.upper()
+                                    }
+                                },
+                                usuario=usuario_logueado
+                            )
+                            
+                            st.success("Guardado")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error al modificar el cliente: {e}")
 
                     # ACCIÓN DE ELIMINAR (FUERA DEL FORM Y CON KEY ÚNICA)
                     st.divider()
@@ -936,9 +1018,31 @@ else:
                         confirmar_del = st.checkbox("Confirmar eliminación", key="check_del_final")
                         if st.button("🗑️ Eliminar Cliente", key="btn_del_final"):
                             if confirmar_del:
-                                db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
-                                st.success("🗑️ Cliente eliminado.")
-                                st.rerun()
+                                usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                                
+                                try:
+                                    # 1. Ejecutamos la eliminación
+                                    db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
+                                    
+                                    # 2. 🔥 LOG DE AUDITORÍA (Eliminación de Cliente)
+                                    log_auditoria(
+                                        tabla="CLIENTES",
+                                        accion="DELETE",
+                                        id_entidad=id_modificar,
+                                        detalles={
+                                            "operacion": "Eliminar Cliente",
+                                            "cliente_eliminado": f"{fila.get('Apellido')}, {fila.get('Nombre')}",
+                                            "dni_cuit": fila.get('CUIT') if fila.get('CUIT') else fila.get('DNI'),
+                                            "telefono": fila.get('Telefono')
+                                        },
+                                        usuario=usuario_logueado
+                                    )
+                                    
+                                    st.success("🗑️ Cliente eliminado.")
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Error al eliminar el cliente: {e}")
                             else:
                                 st.warning("⚠️ Debes marcar la casilla de confirmación.")
 
@@ -1944,34 +2048,33 @@ else:
                         
                         if st.form_submit_button("🚀 Confirmar División"):
                             # --- VALIDACIÓN DE STOCK ---
-                            # Todo esto DEBE estar indentado bajo el if de arriba
                             if int(fila_fardo['Stock_Actual']) <= 0:
                                 st.error(f"⚠️ ¡Error! El fardo '{fila_fardo['Nombre']}' no cuenta con existencias para dividir (Stock actual: 0).")
                                 st.stop() 
                             
                             # --- LÓGICA DE ACTUALIZACIÓN ---
-                            # Todo esto TAMBIÉN debe estar indentado bajo el if
                             try:
                                 # Descontar 1 al fardo
                                 nuevo_stock_fardo = int(fila_fardo['Stock_Actual']) - 1
                                 db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", id_fardo).execute()
                                 
                                 # Sumar unidades a la cajita
-                                prod_cajita = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_cajita).execute().data
+                                prod_cajita = db.table("PRODUCTOS").select("Stock_Actual", "Nombre").eq("ID_Producto", id_cajita).execute().data
                                 if not prod_cajita:
                                     st.error("¡Error! El código de la cajita no existe en la base de datos.")
                                     st.stop()
                                     
                                 stock_cajita_old = int(prod_cajita[0]['Stock_Actual'])
-                                db.table("PRODUCTOS").update({"Stock_Actual": stock_cajita_old + unidades}).eq("ID_Producto", id_cajita).execute()
+                                nombre_cajita = prod_cajita[0].get('Nombre', 'Cajita Individual')
+                                nuevo_stock_cajita = stock_cajita_old + unidades
+                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_cajita}).eq("ID_Producto", id_cajita).execute()
                                 
                                 # --- REGISTRO EN CAMBIOS ---
-                                # Usamos st.session_state.usuario_actual
                                 usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
                                 
                                 db.table("CAMBIOS").insert({
                                     "Fecha": datetime.now().isoformat(),
-                                    "Usuario": usuario_logueado, # <--- Aquí queda registrado tu nombre
+                                    "Usuario": usuario_logueado,
                                     "Código": id_fardo,
                                     "Nombre": fila_fardo['Nombre'],
                                     "Descripción": f"División de fardo: Se transformó en {unidades} unidades de {id_cajita}",
@@ -1982,16 +2085,44 @@ else:
                                 
                                 db.table("CAMBIOS").insert({
                                     "Fecha": datetime.now().isoformat(),
-                                    "Usuario": usuario_logueado, # <--- Aquí también
+                                    "Usuario": usuario_logueado,
                                     "Código": id_cajita,
                                     "Nombre": "Cajitas (División)",
                                     "Descripción": f"Ingreso por división de fardo {id_fardo}",
                                     "Entra": int(unidades), "Sale": 0,
                                     "existencia_ant": stock_cajita_old,
-                                    "existencia_actual": stock_cajita_old + unidades
+                                    "existencia_actual": nuevo_stock_cajita
                                 }).execute()
                                 
+                                # =====================================================================
+                                # 🔥 LOG DE AUDITORÍA (Módulo Divisor de Fardos)
+                                # =====================================================================
+                                log_auditoria(
+                                    tabla="PRODUCTOS",
+                                    accion="UPDATE",
+                                    id_entidad=id_fardo,
+                                    detalles={
+                                        "operacion": "Divisor de Fardos",
+                                        "fardo": {
+                                            "id": id_fardo,
+                                            "nombre": fila_fardo['Nombre'],
+                                            "stock_anterior": int(fila_fardo['Stock_Actual']),
+                                            "stock_nuevo": nuevo_stock_fardo
+                                        },
+                                        "cajita": {
+                                            "id": id_cajita,
+                                            "nombre": nombre_cajita,
+                                            "unidades_ingresadas": int(unidades),
+                                            "stock_anterior": stock_cajita_old,
+                                            "stock_nuevo": nuevo_stock_cajita
+                                        }
+                                    },
+                                    usuario=usuario_logueado
+                                )
+                                # =====================================================================
+                                
                                 st.success(f"✅ ¡División realizada por {usuario_logueado}!")
+                                if 'df_prod' in st.session_state: del st.session_state['df_prod']
                                 st.rerun()
                                 
                             except Exception as e:
@@ -2147,6 +2278,22 @@ else:
                                 try:
                                     # Ejecutamos el update
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
+                                    
+                                    # =====================================================================
+                                    # 🔥 LOG DE AUDITORÍA (Módulo Modificaciones Manuales)
+                                    # =====================================================================
+                                    log_auditoria(
+                                        tabla="PRODUCTOS",
+                                        accion="UPDATE",
+                                        id_entidad=id_sel,
+                                        detalles={
+                                            "motivo": "Modificación manual desde formulario de edición",
+                                            "valores_finales": datos_update
+                                        },
+                                        usuario="Martin"
+                                    )
+                                    # =====================================================================
+
                                     st.success("¡Producto actualizado exitosamente!")
                                     if 'df_prod' in st.session_state: del st.session_state['df_prod']
                                     st.rerun()
@@ -2155,7 +2302,6 @@ else:
                                     st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
                 else:
                     st.info("No hay productos para modificar.")
-
             # --- PESTAÑA IMPORTAR (Versión Optimizada) ---
             with tab_importar:
                 st.subheader("📥 Importación Masiva de Productos")
@@ -2967,3 +3113,64 @@ else:
     # =====================================================================
     elif menu == "📈 Reporte de Utilidades":
         mostrar_reporte_utilidad()
+
+    # =====================================================================
+    # MODULO: ⚙️ AUDITORÍA
+    # =====================================================================
+    elif menu == "⚙️ Auditoría":
+        st.title("🛡️ Auditoría del Sistema")
+        st.subheader("Historial de Modificaciones y Eventos")
+        
+        # --- FILTROS DE BÚSQUEDA ---
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: 
+            # Agregamos "Todas" para no obligar al usuario a filtrar por una sola tabla
+            tabla_f = st.selectbox("Tabla Afectada", ["Todas", "PRODUCTOS", "CAJA", "VENDEDORES", "COMPRAS_CABECERA"], key="sel_tabla")
+        with c2: 
+            accion_f = st.selectbox("Acción", ["Todas", "INSERT", "UPDATE", "DELETE"], key="sel_accion")
+        with c3: 
+            user_f = st.text_input("Usuario (Filtro parcial)", key="input_user")
+        with c4: 
+            id_f = st.text_input("ID Entidad Exacto", key="input_id")
+        
+        # --- CONSTRUCCIÓN DINÁMICA DE QUERY ---
+        query = db.table("AUDITORIA").select("*")
+        
+        if tabla_f != "Todas":
+            query = query.eq("Tabla_Afectada", tabla_f)
+        if accion_f != "Todas":
+            query = query.eq("Accion", accion_f)
+        if user_f:
+            query = query.ilike("Usuario", f"%{user_f}%")
+        if id_f:
+            query = query.eq("ID_Entidad", id_f)
+        
+        # --- EJECUCIÓN Y RENDERIZADO ---
+        try:
+            # Ordenamos siempre por el evento más reciente y limitamos para proteger la memoria de la app
+            res = query.order("Fecha_Hora", desc=True).limit(100).execute()
+            
+            if res.data:
+                df_auditoria = pd.DataFrame(res.data)
+                
+                # Formateamos la fecha para que sea más legible en pantalla
+                df_auditoria['Fecha_Hora'] = pd.to_datetime(df_auditoria['Fecha_Hora']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Reordenamos columnas para una vista limpia
+                columnas_ordenadas = ['Fecha_Hora', 'Usuario', 'Tabla_Afectada', 'Accion', 'ID_Entidad', 'Detalles']
+                df_render = df_auditoria[columnas_ordenadas]
+                
+                # Renderizado usando la configuración de columnas de Streamlit para el campo JSON
+                st.dataframe(
+                    df_render,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Detalles": st.column_config.JsonColumn("Datos/Cambios 🔍", help="Historial de campos modificados")
+                    }
+                )
+            else:
+                st.info("No se encontraron registros que coincidan con los criterios de búsqueda.")
+                
+        except Exception as e:
+            st.error(f"Error al consultar la tabla de auditoría: {e}")
