@@ -2994,7 +2994,8 @@ else:
         # 1. Obtenemos estado
         turno_actual = obtener_turno_activo() 
         
-        tab_turno, tab_explorar, tab_config = st.tabs(["🕒 Turno Actual", "🔍 Explorador", "⚙️ Configuración"])
+        # Reducimos los tabs únicamente a las dos vistas útiles
+        tab_turno, tab_explorar = st.tabs(["🕒 Turno Actual", "🔍 Explorador"])
         
         with tab_turno:
             if turno_actual is None:
@@ -3046,7 +3047,6 @@ else:
                 df_filtrado = pd.DataFrame() # Tabla vacía si no hay datos
 
             # --- MOSTRAR MÉTRICAS (SOLO SALDO) ---
-            # Ajustamos a una sola columna para que el saldo quede centrado o destacado
             col_saldo = st.columns(1)
             
             if not df_filtrado.empty:
@@ -3077,7 +3077,6 @@ else:
 
             # --- REGISTRO MANUAL (Fuera del if para que siempre se vea) ---
             with st.expander("➕ Registrar Movimiento Manual"):
-                # ... (el código del formulario que ya tienes)
                 conceptos_data = db.table("LISTA_CONCEPTOS").select("CONCEPTO").execute().data
                 lista_c = [c['CONCEPTO'] for c in conceptos_data]
                 
@@ -3088,7 +3087,6 @@ else:
                     forma_pago = st.selectbox("Forma de Pago", ["Efectivo", "Crédito", "Débito", "Transferencia"])
                     
                     if st.form_submit_button("Guardar"):
-                        # Tu lógica de inserción actual...
                         db.table("CAJA").insert({
                             "ID_Turno": turno_actual['ID_Turno'] if turno_actual else "SIN_TURNO",
                             "Fecha": datetime.now().isoformat(),
