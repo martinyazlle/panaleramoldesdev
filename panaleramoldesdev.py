@@ -831,300 +831,132 @@ else:
     # --- LÓGICA DE MÓDULOS ---
 
     # =====================================================================
-    # MODULO: 👥 CLIENTES
+    # MODULO: 💰 CAJA
     # =====================================================================
-    if menu == "👥 Clientes":
-        st.header("👥 Gestión de Clientes")
+    if menu == "💰 Caja":
+        st.title("💰 Gestión de Caja")
         
-        # 1. Lectura de datos
-        try:
-            response = db.table("CLIENTES").select("*").execute()
-            df_clientes = pd.DataFrame(response.data)
-        except Exception as e:
-            st.error(f"Error al conectar con Supabase: {e}")
-            st.stop()
-
-        # 2. DEFINIR PESTAÑAS DINÁMICAS SEGÚN ROL
-        if st.session_state.rol == "Administrador":
-            nombres_tabs = ["🔍 Explorador", "➕ Nuevo Cliente", "✏️ Modificar"]
-        else:
-            # El Vendedor solo ve estas dos
-            nombres_tabs = ["➕ Nuevo Cliente", "✏️ Modificar"]
-
-        # Creamos las pestañas en una sola llamada
-        tabs = st.tabs(nombres_tabs)
-
-        # 3. ASIGNAR PESTAÑAS SEGÚN ROL
-        if st.session_state.rol == "Administrador":
-            tab_explorador, tab_nuevo, tab_modificar = tabs
-        else:
-            tab_explorador = None
-            tab_nuevo, tab_modificar = tabs
-
-        # 4. CONTENIDO (Solo se ejecuta si la pestaña existe)
+        # 1. Obtenemos estado
+        turno_actual = obtener_turno_activo() 
         
-        if tab_explorador:
-            with tab_explorador:
-                st.subheader("Buscador de Clientes")
-                query = st.text_input("Buscar por nombre, apellido, DNI, CUIT, teléfono o dirección...")
-                if query:
-                    mask = (df_clientes.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1))
-                    st.dataframe(df_clientes[mask], width='stretch')
-                else:
-                    st.dataframe(df_clientes, width='stretch')
-            
-        with tab_nuevo:
-            with st.form("form_nuevo_cliente"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    nombre = st.text_input("Nombre*")
-                    apellido = st.text_input("Apellido*")
-                    dni = st.text_input("DNI", max_chars=8)
-                    cuit = st.text_input("CUIT", max_chars=13)
-                    # 🔥 NUEVO CAMPO: Agregado directamente al formulario de alta
-                    razon_social = st.text_input("Razón Social")
-                    telefono = st.text_input("Teléfono* (10 dígitos)", max_chars=10)
-                with c2:
-                    dir1 = st.text_input("Dirección 1*")
-                    link1 = st.text_input("Link Dirección 1")
-                    dir2 = st.text_input("Dirección 2")
-                    link2 = st.text_input("Link Dirección 2")
-                    dir3 = st.text_input("Dirección 3")
-                    link3 = st.text_input("Link Dirección 3")
-                    zona = st.selectbox("Zona*", ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"])
-                    tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"])
+        # Reducimos los tabs únicamente a las dos vistas útiles
+        tab_turno, tab_explorar = st.tabs(["🕒 Turno Actual", "🔍 Explorador"])
+        
+        with tab_turno:
+            if turno_actual is None:
+                st.warning("⚠️ No hay ningún turno abierto.")
+                monto_inicial = st.number_input("Ingrese monto de apertura (efectivo inicial)", min_value=0.0)
+                if st.button("🚀 Abrir Turno"):
+                    iniciar_turno(monto_inicial, "Martin")
+                    st.rerun()
+            else:
+                st.success(f"✅ Turno Activo: {turno_actual['ID_Turno']}")
                 
-                submitted = st.form_submit_button("Guardar Cliente")
-                
-                if submitted:
-                    # 🔥 NUEVA VALIDACIÓN CONDICIONAL: (Nombre y Apellido) O (Razón Social)
-                    tiene_datos_persona = bool(nombre and apellido)
-                    tiene_razon_social = bool(razon_social)
-                    
-                    if not (tiene_datos_persona or tiene_razon_social):
-                        st.error("⚠️ Debes completar obligatoriamente el 'Nombre y Apellido' o la 'Razón Social'.")
-                    elif not all([telefono, dir1]):
-                        st.error("⚠️ El 'Teléfono' y la 'Dirección 1' son campos obligatorios para cualquier cliente.")
-                    elif telefono in df_clientes['Telefono'].astype(str).values:
-                        st.error("⚠️ Ya existe un cliente con este teléfono!")
-                    else:
-                        # Proceder al guardado en Supabase...
-                        nuevo_cliente = {
-                            "Nombre": nombre.upper() if nombre else "N/A", # Si es empresa, guardamos N/A de forma limpia
-                            "Apellido": apellido.upper() if apellido else "N/A",
-                            "DNI": dni,
-                            "CUIT": cuit, 
-                            "Razón Social": razon_social.upper() if razon_social else "",
-                            "Telefono": telefono, 
-                            "Direccion_1": dir1.upper(),
-                            "Direccion_2": dir2.upper(), 
-                            "Direccion_3": dir3.upper(),
-                            "Link_Direccion_1": link1, 
-                            "Link_Direccion_2": link2,
-                            "Link_Direccion_3": link3, 
-                            "Zona": zona, 
-                            "Tipo_Cliente": tipo
-                        }
-                        
-                        try:
-                            # 1. Insertamos el cliente y capturamos la respuesta de Supabase
-                            resultado = db.table("CLIENTES").insert(nuevo_cliente).execute()
+                with st.expander("🔒 Finalizar Turno"):
+                    with st.form("form_cierre"):
+                        monto_cierre = st.number_input("Monto final en caja", min_value=0.0)
+                        if st.form_submit_button("Confirmar Cierre"):
+                            # A. Cerrar turno en CONTROL_TURNOS
+                            db.table("CONTROL_TURNOS").update({
+                                "Fecha_Hora_Cierre": datetime.now().isoformat(),
+                                "Monto_Cierre_Declarado": float(monto_cierre),
+                                "Estado": "Cerrado"
+                            }).eq("ID_Turno", turno_actual['ID_Turno']).execute()
                             
-                            id_cliente_generado = "N/A"
-                            if resultado.data:
-                                id_cliente_generado = resultado.data[0].get('ID_Cliente', resultado.data[0].get('id', 'N/A'))
-                            
-                            # 2. Recuperamos el usuario logueado
-                            usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
-                            
-                            # 3. 🔥 LOG DE AUDITORÍA (Alta de Cliente con Razón Social)
-                            log_auditoria(
-                                tabla="CLIENTES",
-                                accion="INSERT",
-                                id_entidad=id_cliente_generado,
-                                detalles={
-                                    "operacion": "Alta de Cliente",
-                                    "datos_cliente": {
-                                        "nombre_completo": f"{apellido.upper()}, {nombre.upper()}",
-                                        "razon_social": razon_social.upper() if razon_social else "N/A",
-                                        "telefono": telefono,
-                                        "dni_cuit": cuit if cuit else dni,
-                                        "zona": zona,
-                                        "tipo_cliente": tipo,
-                                        "direccion_principal": dir1.upper()
-                                    }
-                                },
-                                usuario=usuario_logueado
-                            )
-                            
-                            st.success("✅ Cliente cargado!")
+                            # B. Registrar egreso en CAJA
+                            db.table("CAJA").insert({
+                                "Fecha": datetime.now().isoformat(),
+                                "Tipo": "Egreso",
+                                "Concepto": "CIERRE CAJA DIARIO",
+                                "Monto": float(monto_cierre),
+                                "Forma_Pago": "Efectivo",
+                                "ID_Turno": turno_actual['ID_Turno']
+                            }).execute()
+                            st.success("Turno cerrado correctamente.")
                             st.rerun()
-                            
-                        except Exception as e:
-                            st.error(f"Error al guardar el cliente o registrar auditoría: {e}")
-                            
-        if tab_modificar is not None:
-            with tab_modificar:
-                st.subheader("Modificar Cliente Existente")
 
-                # --- 1. SELECTOR DINÁMICO (SOPORTA PERSONAS Y EMPRESAS) ---
-                # Evaluamos fila por fila para armar un texto descriptivo correcto
-                lista_clientes = df_clientes.apply(
-                    lambda row: f"{str(row['Razón Social']).strip()} (ID: {row['ID_Cliente']})"
-                    if pd.notna(row.get('Razón Social')) and str(row.get('Razón Social')).strip() != ""
-                    else f"{row['Nombre']} {row['Apellido']} (ID: {row['ID_Cliente']})",
-                    axis=1
+        with tab_explorar:
+            # Carga datos
+            try:
+                res_caja = db.table("CAJA").select("*").execute()
+                df_caja = pd.DataFrame(res_caja.data)
+            except Exception:
+                df_caja = pd.DataFrame()
+
+            fecha_sel = st.date_input("Consultar fecha", datetime.now())
+            
+            if not df_caja.empty:
+                df_caja['Fecha'] = pd.to_datetime(df_caja['Fecha'])
+                df_filtrado = df_caja[df_caja['Fecha'].dt.date == fecha_sel]
+            else:
+                df_filtrado = pd.DataFrame() # Tabla vacía si no hay datos
+
+            # --- MOSTRAR MÉTRICAS (SOLO SALDO) ---
+            col_saldo = st.columns(1)
+            
+            if not df_filtrado.empty:
+                ingresos = df_filtrado[df_filtrado['Tipo'] == 'Ingreso']['Monto'].sum()
+                egresos = df_filtrado[df_filtrado['Tipo'] == 'Egreso']['Monto'].sum()
+                saldo_final = ingresos - egresos
+            else:
+                saldo_final = 0.0
+            
+            # Mostramos únicamente la métrica del saldo
+            st.metric("Saldo", f"${saldo_final:,.2f}")
+            
+            st.divider() # Un separador visual para que quede más prolijo
+
+            # --- MOSTRAR TABLA O AVISO ---
+            if not df_filtrado.empty:
+                # Definimos las columnas que SÍ queremos mostrar
+                columnas_a_mostrar = ['Fecha', 'Tipo', 'Concepto', 'Monto', 'Forma_Pago']
+                
+                # Renderizamos solo esas columnas y ocultamos el índice
+                st.dataframe(
+                    df_filtrado[columnas_a_mostrar], 
+                    width='stretch', 
+                    hide_index=True  # Esto oculta el número de fila a la izquierda
                 )
+            else:
+                st.info("No hay movimientos registrados para la fecha seleccionada.")
+
+            # --- REGISTRO MANUAL (Fuera del if para que siempre se vea) ---
+            with st.expander("➕ Registrar Movimiento Manual"):
+                conceptos_data = db.table("LISTA_CONCEPTOS").select("CONCEPTO").execute().data
+                lista_c = [c['CONCEPTO'] for c in conceptos_data]
                 
-                seleccion = st.selectbox("Seleccione el cliente", [""] + lista_clientes.tolist(), key="sel_modificar")
-                
-                if seleccion:
-                    # La extracción del ID sigue funcionando igual porque mantuvimos el patrón "(ID: " al final
-                    id_modificar = seleccion.split("(ID: ")[1].replace(")", "")
-                    fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
-
-                    # Primero buscamos si tiene gift card activa
-                    gc_data = db.table("GIFT_CARDS").select("*").eq("ID_Cliente", int(id_modificar)).eq("Estado", True).execute().data
+                with st.form("nuevo_movimiento", clear_on_submit=True):
+                    concepto = st.selectbox("Concepto", lista_c)
+                    tipo = st.radio("Tipo", ["Ingreso", "Egreso"])
+                    importe = st.number_input("Importe", min_value=0.0)
+                    forma_pago = st.selectbox("Forma de Pago", ["Efectivo", "Crédito", "Débito", "Transferencia"])
                     
-                    if gc_data:
-                        gc = gc_data[0]
-                        st.info(f"""
-                        **Detalles de Gift Card Activa:**
-                        - Saldo Inicial: ${gc['Saldo_Inicial']:,.2f}
-                        - Saldo Actual: ${gc['Saldo_Actual']:,.2f}
-                        - Pagada con: {gc['Forma_Pago_Adquisicion']}
-                        """)
-                    
-                    if st.session_state.get('rol') == "Administrador":
-                        if st.button("🎁 Gestionar Gift Card"):
-                            # Adaptamos también el nombre que se le pasa al diálogo de la Gift Card
-                            nombre_para_gc = str(fila['Razón Social']).upper() if pd.notna(fila.get('Razón Social')) and str(fila.get('Razón Social')).strip() != "" else f"{fila['Nombre']} {fila['Apellido']}"
-                            abrir_asignacion_gift_card(id_modificar, nombre_para_gc)
-
-                    # 2. Formulario
-                    with st.form("form_datos"):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            nuevo_nombre = st.text_input("Nombre", value=fila.get('Nombre', ''))
-                            nuevo_apellido = st.text_input("Apellido", value=fila.get('Apellido', ''))
-                            nuevo_dni = st.text_input("DNI", value=fila.get('DNI', ''))
-                            nueva_razon = st.text_input("Razón Social", value=fila.get('Razón Social', ''))
-                            nuevo_cuit = st.text_input("CUIT", value=fila.get('CUIT', ''))
-                            nuevo_telefono = st.text_input("Teléfono", value=fila.get('Telefono', ''), max_chars=10)
+                    if st.form_submit_button("Guardar"):
+                        db.table("CAJA").insert({
+                            "ID_Turno": turno_actual['ID_Turno'] if turno_actual else "SIN_TURNO",
+                            "Fecha": datetime.now().isoformat(),
+                            "Tipo": tipo,
+                            "Concepto": concepto,
+                            "Monto": float(importe),
+                            "Forma_Pago": forma_pago
+                        }).execute()
                         
-                        with c2:
-                            nuevo_dir1 = st.text_input("Dirección 1", value=fila.get('Direccion_1', ''))
-                            nuevo_link1 = st.text_input("Link Dirección 1", value=fila.get('Link_Direccion_1', ''))
-                            nuevo_dir2 = st.text_input("Dirección 2", value=fila.get('Direccion_2', ''))
-                            nuevo_link2 = st.text_input("Link Dirección 2", value=fila.get('Link_Direccion_2', ''))
-                            nuevo_dir3 = st.text_input("Dirección 3", value=fila.get('Direccion_3', ''))
-                            nuevo_link3 = st.text_input("Link Dirección 3", value=fila.get('Link_Direccion_3', ''))
-                        
-                        nueva_obs = st.text_area("Observaciones", value=fila.get('Observaciones', ''))
-                        
-                        zonas_lista = ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"]
-                        idx_zona = zonas_lista.index(fila.get('Zona')) if fila.get('Zona') in zonas_lista else 0
-                        input_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
-                        
-                        tipos_lista = ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"]
-                        idx_tipo = tipos_lista.index(fila.get('Tipo_Cliente')) if fila.get('Tipo_Cliente') in tipos_lista else 0
-                        input_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
-                        
-                        guardar_btn = st.form_submit_button("Guardar Cambios")
-            
-                    # ACCIÓN DE GUARDAR (FUERA DEL FORM)
-                    if guardar_btn:
-                        usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
-                        
-                        try:
-                            db.table("CLIENTES").update({
-                                "Nombre": str(nuevo_nombre or "").upper(),
-                                "Apellido": (nuevo_apellido or "").upper(),
-                                "DNI": nuevo_dni,
-                                "Razón Social": (nueva_razon or "").upper(),
-                                "CUIT": nuevo_cuit,
-                                "Telefono": nuevo_telefono,
-                                "Direccion_1": (nuevo_dir1 or "").upper(),
-                                "Link_Direccion_1": nuevo_link1,
-                                "Direccion_2": (nuevo_dir2 or "").upper(),
-                                "Link_Direccion_2": nuevo_link2,
-                                "Direccion_3": (nuevo_dir3 or "").upper(),
-                                "Link_Direccion_3": nuevo_link3,
-                                "Observaciones": nueva_obs,
-                                "Zona": input_zona,
-                                "Tipo_Cliente": input_tipo
-                            }).eq("ID_Cliente", int(id_modificar)).execute()
-                            
-                            # Log de auditoría adaptado para contemplar si es empresa o persona en el texto descriptivo
-                            nombre_antiguo = fila.get('Razón Social') if fila.get('Razón Social') else f"{fila.get('Apellido')}, {fila.get('Nombre')}"
-                            nombre_nuevo = nueva_razon.upper() if nueva_razon else f"{nuevo_apellido.upper()}, {nuevo_nombre.upper()}"
-
-                            log_auditoria(
-                                tabla="CLIENTES",
-                                accion="UPDATE",
-                                id_entidad=id_modificar,
-                                detalles={
-                                    "operacion": "Modificar Cliente",
-                                    "antes": {
-                                        "nombre_comercial_o_completo": nombre_antiguo,
-                                        "telefono": fila.get('Telefono'),
-                                        "zona": fila.get('Zona'),
-                                        "direccion_1": fila.get('Direccion_1')
-                                    },
-                                    "despues": {
-                                        "nombre_comercial_o_completo": nombre_nuevo,
-                                        "telefono": nuevo_telefono,
-                                        "zona": input_zona,
-                                        "direccion_1": nuevo_dir1.upper()
-                                    }
-                                },
-                                usuario=usuario_logueado
-                            )
-                            
-                            st.success("Guardado")
-                            st.rerun()
-                            
-                        except Exception as e:
-                            st.error(f"Error al modificar el cliente: {e}")
-
-                    # ACCIÓN DE ELIMINAR
-                    st.divider()
-                    if st.session_state.get('rol') == "Administrador":
-                        confirmar_del = st.checkbox("Confirmar eliminación", key="check_del_final")
-                        if st.button("🗑️ Eliminar Cliente", key="btn_del_final"):
-                            if confirmar_del:
-                                usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
-                                
-                                try:
-                                    db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
-                                    
-                                    cliente_identificador = fila.get('Razón Social') if fila.get('Razón Social') else f"{fila.get('Apellido')}, {fila.get('Nombre')}"
-
-                                    log_auditoria(
-                                        tabla="CLIENTES",
-                                        accion="DELETE",
-                                        id_entidad=id_modificar,
-                                        details={
-                                            "operacion": "Eliminar Cliente",
-                                            "cliente_eliminado": cliente_identificador,
-                                            "dni_cuit": fila.get('CUIT') if fila.get('CUIT') else fila.get('DNI'),
-                                            "telefono": fila.get('Telefono')
-                                        },
-                                        usuario=usuario_logueado
-                                    )
-                                    
-                                    st.success("🗑️ Cliente eliminado.")
-                                    st.rerun()
-                                    
-                                except Exception as e:
-                                    st.error(f"Error al eliminar el cliente: {e}")
-                            else:
-                                st.warning("⚠️ Debes marcar la casilla de confirmación.")
+                        if tipo == "Ingreso" and forma_pago != "Efectivo":
+                            db.table("CAJA").insert({
+                                "ID_Turno": turno_actual['ID_Turno'] if turno_actual else "SIN_TURNO",
+                                "Fecha": datetime.now().isoformat(),
+                                "Tipo": "Egreso",
+                                "Concepto": f"RETIRO PAGO {forma_pago.upper()}",
+                                "Monto": float(importe),
+                                "Forma_Pago": forma_pago
+                            }).execute()
+                        st.success("✅ Registro realizado.")
+                        st.rerun()
 
     # =====================================================================
     # MODULO: 🛒 PUNTO DE VENTA
     # =====================================================================
-    if menu == "🛒 Punto de Venta":
+    elif menu == "🛒 Punto de Venta":
         col_t1, col_t2 = st.columns([4, 1])
         col_t1.header("🚀 Venta Rápida - Pañalera Moldes")
         if col_t2.button("🧹 Limpiar Todo", type="secondary", width='stretch'):
@@ -1769,107 +1601,295 @@ else:
             st.info("El carrito está vacío.")
 
     # =====================================================================
-    # MODULO: 📦 STOCK
+    # MODULO: 👥 CLIENTES
     # =====================================================================
-    elif menu == "📦 Stock":
-        st.header("📊 Gestión y Análisis de Stock")
+    elif menu == "👥 Clientes":
+        st.header("👥 Gestión de Clientes")
         
-        # 1. Carga de datos
-        df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
-        df_prov = pd.DataFrame(db.table("PROVEEDORES").select("*").execute().data)
-        
-        # --- BUSCADOR FLEXIBLE ---
-        st.subheader("🔍 Buscar Artículos")
-        
-        # Usamos text_input para escritura libre
-        busqueda_texto = st.text_input(
-            "Escriba para filtrar por nombre o código:", 
-            placeholder="Ej: babydry, pampers, 779..."
-        )
-        
-        # --- FILTROS ---
-        c1, c2, c3 = st.columns(3)
-        rubros = ["Todos"] + df_prod['Rubro'].unique().tolist()
-        marcas = ["Todos"] + df_prod['Marca'].unique().tolist()
-        
-        # Creamos un diccionario {ID_Proveedor: Razon_Social} para cruzar datos si tu tabla PRODUCTOS guarda el ID
-        # Nota: Ajusta si tu tabla PRODUCTOS guarda directamente el nombre o el ID.
-        provs = ["Todos"] + df_prov['Razon_Social'].tolist()
-        
-        filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros)
-        filtro_marca = c2.selectbox("Filtrar por Marca", marcas)
-        filtro_prov = c3.selectbox("Filtrar por Proveedor", provs)
-        
-        # Inicializamos la copia para aplicar filtros consecutivos
-        df_f = df_prod.copy()
-        
-        # --- FILTRADO ACUMULATIVO (CONSECUTIVO) ---
-        
-        # Filtro 1: Búsqueda por texto (si hay algo escrito)
-        if busqueda_texto:
-            busqueda_texto = busqueda_texto.lower()
-            mask = df_f['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
-                   df_f['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
-            df_f = df_f[mask]
-        
-        # Filtro 2: Rubro
-        if filtro_rubro != "Todos":
-            df_f = df_f[df_f['Rubro'] == filtro_rubro]
-            
-        # Filtro 3: Marca
-        if filtro_marca != "Todos":
-            df_f = df_f[df_f['Marca'] == filtro_marca]
-            
-        # Filtro 4: Proveedor (Mapeando la Razón Social seleccionada al ID o columna correspondiente)
-        if filtro_prov != "Todos":
-            # Si tu tabla PRODUCTOS usa directamente el nombre del proveedor en una columna 'Proveedor' o 'Razon_Social':
-            if 'Proveedor' in df_f.columns:
-                df_f = df_f[df_f['Proveedor'] == filtro_prov]
-            elif 'ID_Proveedor' in df_f.columns:
-                # Buscamos el ID que corresponde a esa Razón Social
-                prov_sel = df_prov[df_prov['Razon_Social'] == filtro_prov]
-                if not prov_sel.empty:
-                    id_prov_buscado = prov_sel.iloc[0]['ID_Proveedor']
-                    df_f = df_f[df_f['ID_Proveedor'] == id_prov_buscado]
-        
-        # 2. Cálculos en tiempo real
-        df_f['Faltante_Min'] = (df_f['Stock_Min'] - df_f['Stock_Actual']).clip(lower=0)
-        df_f['Faltante_Max'] = (df_f['Stock_Max'] - df_f['Stock_Actual']).clip(lower=0)
-        
-        # Mostrar tabla
-        st.dataframe(df_f[['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']], width='stretch')
-        
-        # 3. Acciones (Exportación)
-        col_exp1, col_exp2 = st.columns(2)
-        
-        # Exportar a Excel
-        import io
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_f.to_excel(writer, index=False)
-        
-        col_exp1.download_button(
-            label="📥 Exportar a Excel", 
-            data=buffer.getvalue(), 
-            file_name="reporte_stock.xlsx", 
-            mime="application/vnd.ms-excel"
-        )
-        
-        # Preparar mensaje WhatsApp
-        if col_exp2.button("💬 Generar Resumen para WhatsApp"):
-            mensaje = "🛒 *Pedido Sugerido (Faltantes a Mínimo):*\n"
-            faltantes = df_f[df_f['Faltante_Min'] > 0]
-            for _, item in faltantes.iterrows():
-                mensaje += f"- {item['Nombre']}: Faltan {item['Faltante_Min']}\n"
-            
-            st.text_area("Copia este mensaje para WhatsApp:", value=mensaje)
+        # 1. Lectura de datos
+        try:
+            response = db.table("CLIENTES").select("*").execute()
+            df_clientes = pd.DataFrame(response.data)
+        except Exception as e:
+            st.error(f"Error al conectar con Supabase: {e}")
+            st.stop()
 
-        # 4. Botón de Mantenimiento
-        if st.button("🔄 RECALCULAR STOCK MÍNIMO/MÁXIMO"):
-            with st.spinner("Calculando rotación de 60 días..."):
-                if calcular_y_actualizar_stock_automatico():
-                    st.success("¡Stock mínimo y máximo actualizado!")
-                    st.rerun()
+        # 2. DEFINIR PESTAÑAS DINÁMICAS SEGÚN ROL
+        if st.session_state.rol == "Administrador":
+            nombres_tabs = ["🔍 Explorador", "➕ Nuevo Cliente", "✏️ Modificar"]
+        else:
+            # El Vendedor solo ve estas dos
+            nombres_tabs = ["➕ Nuevo Cliente", "✏️ Modificar"]
+
+        # Creamos las pestañas en una sola llamada
+        tabs = st.tabs(nombres_tabs)
+
+        # 3. ASIGNAR PESTAÑAS SEGÚN ROL
+        if st.session_state.rol == "Administrador":
+            tab_explorador, tab_nuevo, tab_modificar = tabs
+        else:
+            tab_explorador = None
+            tab_nuevo, tab_modificar = tabs
+
+        # 4. CONTENIDO (Solo se ejecuta si la pestaña existe)
+        
+        if tab_explorador:
+            with tab_explorador:
+                st.subheader("Buscador de Clientes")
+                query = st.text_input("Buscar por nombre, apellido, DNI, CUIT, teléfono o dirección...")
+                if query:
+                    mask = (df_clientes.apply(lambda row: row.astype(str).str.contains(query, case=False).any(), axis=1))
+                    st.dataframe(df_clientes[mask], width='stretch')
+                else:
+                    st.dataframe(df_clientes, width='stretch')
+            
+        with tab_nuevo:
+            with st.form("form_nuevo_cliente"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    nombre = st.text_input("Nombre*")
+                    apellido = st.text_input("Apellido*")
+                    dni = st.text_input("DNI", max_chars=8)
+                    cuit = st.text_input("CUIT", max_chars=13)
+                    # 🔥 NUEVO CAMPO: Agregado directamente al formulario de alta
+                    razon_social = st.text_input("Razón Social")
+                    telefono = st.text_input("Teléfono* (10 dígitos)", max_chars=10)
+                with c2:
+                    dir1 = st.text_input("Dirección 1*")
+                    link1 = st.text_input("Link Dirección 1")
+                    dir2 = st.text_input("Dirección 2")
+                    link2 = st.text_input("Link Dirección 2")
+                    dir3 = st.text_input("Dirección 3")
+                    link3 = st.text_input("Link Dirección 3")
+                    zona = st.selectbox("Zona*", ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"])
+                    tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"])
+                
+                submitted = st.form_submit_button("Guardar Cliente")
+                
+                if submitted:
+                    # 🔥 NUEVA VALIDACIÓN CONDICIONAL: (Nombre y Apellido) O (Razón Social)
+                    tiene_datos_persona = bool(nombre and apellido)
+                    tiene_razon_social = bool(razon_social)
+                    
+                    if not (tiene_datos_persona or tiene_razon_social):
+                        st.error("⚠️ Debes completar obligatoriamente el 'Nombre y Apellido' o la 'Razón Social'.")
+                    elif not all([telefono, dir1]):
+                        st.error("⚠️ El 'Teléfono' y la 'Dirección 1' son campos obligatorios para cualquier cliente.")
+                    elif telefono in df_clientes['Telefono'].astype(str).values:
+                        st.error("⚠️ Ya existe un cliente con este teléfono!")
+                    else:
+                        # Proceder al guardado en Supabase...
+                        nuevo_cliente = {
+                            "Nombre": nombre.upper() if nombre else "N/A", # Si es empresa, guardamos N/A de forma limpia
+                            "Apellido": apellido.upper() if apellido else "N/A",
+                            "DNI": dni,
+                            "CUIT": cuit, 
+                            "Razón Social": razon_social.upper() if razon_social else "",
+                            "Telefono": telefono, 
+                            "Direccion_1": dir1.upper(),
+                            "Direccion_2": dir2.upper(), 
+                            "Direccion_3": dir3.upper(),
+                            "Link_Direccion_1": link1, 
+                            "Link_Direccion_2": link2,
+                            "Link_Direccion_3": link3, 
+                            "Zona": zona, 
+                            "Tipo_Cliente": tipo
+                        }
+                        
+                        try:
+                            # 1. Insertamos el cliente y capturamos la respuesta de Supabase
+                            resultado = db.table("CLIENTES").insert(nuevo_cliente).execute()
+                            
+                            id_cliente_generado = "N/A"
+                            if resultado.data:
+                                id_cliente_generado = resultado.data[0].get('ID_Cliente', resultado.data[0].get('id', 'N/A'))
+                            
+                            # 2. Recuperamos el usuario logueado
+                            usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                            
+                            # 3. 🔥 LOG DE AUDITORÍA (Alta de Cliente con Razón Social)
+                            log_auditoria(
+                                tabla="CLIENTES",
+                                accion="INSERT",
+                                id_entidad=id_cliente_generado,
+                                detalles={
+                                    "operacion": "Alta de Cliente",
+                                    "datos_cliente": {
+                                        "nombre_completo": f"{apellido.upper()}, {nombre.upper()}",
+                                        "razon_social": razon_social.upper() if razon_social else "N/A",
+                                        "telefono": telefono,
+                                        "dni_cuit": cuit if cuit else dni,
+                                        "zona": zona,
+                                        "tipo_cliente": tipo,
+                                        "direccion_principal": dir1.upper()
+                                    }
+                                },
+                                usuario=usuario_logueado
+                            )
+                            
+                            st.success("✅ Cliente cargado!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error al guardar el cliente o registrar auditoría: {e}")
+                            
+        if tab_modificar is not None:
+            with tab_modificar:
+                st.subheader("Modificar Cliente Existente")
+
+                # --- 1. SELECTOR DINÁMICO (SOPORTA PERSONAS Y EMPRESAS) ---
+                # Evaluamos fila por fila para armar un texto descriptivo correcto
+                lista_clientes = df_clientes.apply(
+                    lambda row: f"{str(row['Razón Social']).strip()} (ID: {row['ID_Cliente']})"
+                    if pd.notna(row.get('Razón Social')) and str(row.get('Razón Social')).strip() != ""
+                    else f"{row['Nombre']} {row['Apellido']} (ID: {row['ID_Cliente']})",
+                    axis=1
+                )
+                
+                seleccion = st.selectbox("Seleccione el cliente", [""] + lista_clientes.tolist(), key="sel_modificar")
+                
+                if seleccion:
+                    # La extracción del ID sigue funcionando igual porque mantuvimos el patrón "(ID: " al final
+                    id_modificar = seleccion.split("(ID: ")[1].replace(")", "")
+                    fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
+
+                    # Primero buscamos si tiene gift card activa
+                    gc_data = db.table("GIFT_CARDS").select("*").eq("ID_Cliente", int(id_modificar)).eq("Estado", True).execute().data
+                    
+                    if gc_data:
+                        gc = gc_data[0]
+                        st.info(f"""
+                        **Detalles de Gift Card Activa:**
+                        - Saldo Inicial: ${gc['Saldo_Inicial']:,.2f}
+                        - Saldo Actual: ${gc['Saldo_Actual']:,.2f}
+                        - Pagada con: {gc['Forma_Pago_Adquisicion']}
+                        """)
+                    
+                    if st.session_state.get('rol') == "Administrador":
+                        if st.button("🎁 Gestionar Gift Card"):
+                            # Adaptamos también el nombre que se le pasa al diálogo de la Gift Card
+                            nombre_para_gc = str(fila['Razón Social']).upper() if pd.notna(fila.get('Razón Social')) and str(fila.get('Razón Social')).strip() != "" else f"{fila['Nombre']} {fila['Apellido']}"
+                            abrir_asignacion_gift_card(id_modificar, nombre_para_gc)
+
+                    # 2. Formulario
+                    with st.form("form_datos"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            nuevo_nombre = st.text_input("Nombre", value=fila.get('Nombre', ''))
+                            nuevo_apellido = st.text_input("Apellido", value=fila.get('Apellido', ''))
+                            nuevo_dni = st.text_input("DNI", value=fila.get('DNI', ''))
+                            nueva_razon = st.text_input("Razón Social", value=fila.get('Razón Social', ''))
+                            nuevo_cuit = st.text_input("CUIT", value=fila.get('CUIT', ''))
+                            nuevo_telefono = st.text_input("Teléfono", value=fila.get('Telefono', ''), max_chars=10)
+                        
+                        with c2:
+                            nuevo_dir1 = st.text_input("Dirección 1", value=fila.get('Direccion_1', ''))
+                            nuevo_link1 = st.text_input("Link Dirección 1", value=fila.get('Link_Direccion_1', ''))
+                            nuevo_dir2 = st.text_input("Dirección 2", value=fila.get('Direccion_2', ''))
+                            nuevo_link2 = st.text_input("Link Dirección 2", value=fila.get('Link_Direccion_2', ''))
+                            nuevo_dir3 = st.text_input("Dirección 3", value=fila.get('Direccion_3', ''))
+                            nuevo_link3 = st.text_input("Link Dirección 3", value=fila.get('Link_Direccion_3', ''))
+                        
+                        nueva_obs = st.text_area("Observaciones", value=fila.get('Observaciones', ''))
+                        
+                        zonas_lista = ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"]
+                        idx_zona = zonas_lista.index(fila.get('Zona')) if fila.get('Zona') in zonas_lista else 0
+                        input_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
+                        
+                        tipos_lista = ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"]
+                        idx_tipo = tipos_lista.index(fila.get('Tipo_Cliente')) if fila.get('Tipo_Cliente') in tipos_lista else 0
+                        input_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
+                        
+                        guardar_btn = st.form_submit_button("Guardar Cambios")
+            
+                    # ACCIÓN DE GUARDAR (FUERA DEL FORM)
+                    if guardar_btn:
+                        usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                        
+                        try:
+                            db.table("CLIENTES").update({
+                                "Nombre": str(nuevo_nombre or "").upper(),
+                                "Apellido": (nuevo_apellido or "").upper(),
+                                "DNI": nuevo_dni,
+                                "Razón Social": (nueva_razon or "").upper(),
+                                "CUIT": nuevo_cuit,
+                                "Telefono": nuevo_telefono,
+                                "Direccion_1": (nuevo_dir1 or "").upper(),
+                                "Link_Direccion_1": nuevo_link1,
+                                "Direccion_2": (nuevo_dir2 or "").upper(),
+                                "Link_Direccion_2": nuevo_link2,
+                                "Direccion_3": (nuevo_dir3 or "").upper(),
+                                "Link_Direccion_3": nuevo_link3,
+                                "Observaciones": nueva_obs,
+                                "Zona": input_zona,
+                                "Tipo_Cliente": input_tipo
+                            }).eq("ID_Cliente", int(id_modificar)).execute()
+                            
+                            # Log de auditoría adaptado para contemplar si es empresa o persona en el texto descriptivo
+                            nombre_antiguo = fila.get('Razón Social') if fila.get('Razón Social') else f"{fila.get('Apellido')}, {fila.get('Nombre')}"
+                            nombre_nuevo = nueva_razon.upper() if nueva_razon else f"{nuevo_apellido.upper()}, {nuevo_nombre.upper()}"
+
+                            log_auditoria(
+                                tabla="CLIENTES",
+                                accion="UPDATE",
+                                id_entidad=id_modificar,
+                                detalles={
+                                    "operacion": "Modificar Cliente",
+                                    "antes": {
+                                        "nombre_comercial_o_completo": nombre_antiguo,
+                                        "telefono": fila.get('Telefono'),
+                                        "zona": fila.get('Zona'),
+                                        "direccion_1": fila.get('Direccion_1')
+                                    },
+                                    "despues": {
+                                        "nombre_comercial_o_completo": nombre_nuevo,
+                                        "telefono": nuevo_telefono,
+                                        "zona": input_zona,
+                                        "direccion_1": nuevo_dir1.upper()
+                                    }
+                                },
+                                usuario=usuario_logueado
+                            )
+                            
+                            st.success("Guardado")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error al modificar el cliente: {e}")
+
+                    # ACCIÓN DE ELIMINAR
+                    st.divider()
+                    if st.session_state.get('rol') == "Administrador":
+                        confirmar_del = st.checkbox("Confirmar eliminación", key="check_del_final")
+                        if st.button("🗑️ Eliminar Cliente", key="btn_del_final"):
+                            if confirmar_del:
+                                usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
+                                
+                                try:
+                                    db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
+                                    
+                                    cliente_identificador = fila.get('Razón Social') if fila.get('Razón Social') else f"{fila.get('Apellido')}, {fila.get('Nombre')}"
+
+                                    log_auditoria(
+                                        tabla="CLIENTES",
+                                        accion="DELETE",
+                                        id_entidad=id_modificar,
+                                        details={
+                                            "operacion": "Eliminar Cliente",
+                                            "cliente_eliminado": cliente_identificador,
+                                            "dni_cuit": fila.get('CUIT') if fila.get('CUIT') else fila.get('DNI'),
+                                            "telefono": fila.get('Telefono')
+                                        },
+                                        usuario=usuario_logueado
+                                    )
+                                    
+                                    st.success("🗑️ Cliente eliminado.")
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Error al eliminar el cliente: {e}")
+                            else:
+                                st.warning("⚠️ Debes marcar la casilla de confirmación.")
 
     # =====================================================================
     # MODULO: 📋 HISTORIAL DE VENTAS
@@ -1882,79 +1902,6 @@ else:
     # =====================================================================
     elif menu == "⚙️ Configuración Pagos":
         modulo_config_pagos()
-
-    # =====================================================================
-    # MODULO: 🚚 GESTION DE REPARTOS
-    # =====================================================================
-    if menu == "🚚 Gestión de Repartos":
-        
-        # Obtenemos ventas pendientes de reparto
-        ventas_reparto = db.table("VENTAS_PENDIENTES") \
-                        .select("*") \
-                        .eq("Forma_Entrega", "Reparto") \
-                        .execute().data
-        
-        if not ventas_reparto:
-            st.info("No hay repartos pendientes.")
-        else:
-            df = pd.DataFrame(ventas_reparto)
-            df['Fecha_Entrega'] = pd.to_datetime(df['Fecha_Entrega']).dt.date
-            df = df.sort_values(by='Fecha_Entrega')
-            
-            # 1. Calculamos el total general
-            total_general = len(df)
-            
-            # 2. Título con el número integrado entre paréntesis
-            st.markdown(f"## 🗺️ Planificación de Repartos ({total_general})")
-            st.divider()
-            
-            # Recuperamos el rol del usuario actual
-            rol_usuario = st.session_state.get('rol', 'Vendedor')
-            
-            # 3. Agrupamos por fecha
-            for fecha, grupo in df.groupby('Fecha_Entrega'):
-                # Título del día con su propio contador entre paréntesis
-                st.subheader(f"📅 {fecha} ({len(grupo)})")
-                
-                # --- CONTROL DE ACCESO POR ROL ---
-                # Solo el Administrador puede configurar el origen y generar el diagrama optimizado
-                if rol_usuario == "Administrador":
-                    with st.expander(f"⚙️ Configurar Origen para {fecha}"):
-                        opciones = {"Pañalera (Local)": (-24.793734909695726, -65.42769672376464), "Otro (Link de Maps)": "link"}
-                        sel_origen = st.selectbox("¿Desde dónde sale el reparto?", list(opciones.keys()), key=f"sel_{fecha}")
-                        
-                        if sel_origen == "Otro (Link de Maps)":
-                            link_maps = st.text_input("Pega el link de Google Maps aquí:")
-                            if link_maps:
-                                coords = extraer_coords_desde_link(link_maps)
-                                if coords:
-                                    st.success(f"Coordenadas detectadas: {coords}")
-                                    punto_partida = coords
-                                else:
-                                    st.error("No pude leer el link. Asegúrate de copiarlo desde el botón 'Compartir' de Google Maps.")
-                                    punto_partida = (-24.7825, -65.4111) # Default
-                        else:
-                            punto_partida = opciones[sel_origen]
-
-                    # Botón de optimización
-                    if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
-                        st.session_state[f"mostrar_diagrama_{fecha}"] = True
-                    
-                    # Si la bandera es True, mostramos el mapa interactivo
-                    if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
-                        generar_diagrama_optimizada(grupo, punto_partida, fecha)
-                
-                # 3. Iteramos sobre los repartos de ESE día (Visible para TODOS los roles)
-                for _, v in grupo.iterrows():
-                    with st.container(border=True):
-                        c1, c2, c3 = st.columns([2, 2, 1])
-                        c1.write(f"👤 **Cliente:** {v['Cliente']}")
-                        c2.write(f"📍 **Dir:** {v['Direccion_Entrega']}")
-                        
-                        if v.get('Link_Maps_Entrega'):
-                            c3.link_button("📍 Maps", v['Link_Maps_Entrega'])
-                        
-                        st.caption(f"💰 {v['Metodo_Pago']}")
 
     # =====================================================================
     # MODULO: 📦 PRODUCTOS
@@ -2518,11 +2465,114 @@ else:
                     except Exception as e:
                         st.error(f"Error al procesar el archivo: {e}")
                         st.write("Asegurate de que las columnas coincidan exactamente con: ID_Producto, Nombre, etc.")
+    
+    # =====================================================================
+    # MODULO: 📦 STOCK
+    # =====================================================================
+    elif menu == "📦 Stock":
+        st.header("📊 Gestión y Análisis de Stock")
+        
+        # 1. Carga de datos
+        df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
+        df_prov = pd.DataFrame(db.table("PROVEEDORES").select("*").execute().data)
+        
+        # --- BUSCADOR FLEXIBLE ---
+        st.subheader("🔍 Buscar Artículos")
+        
+        # Usamos text_input para escritura libre
+        busqueda_texto = st.text_input(
+            "Escriba para filtrar por nombre o código:", 
+            placeholder="Ej: babydry, pampers, 779..."
+        )
+        
+        # --- FILTROS ---
+        c1, c2, c3 = st.columns(3)
+        rubros = ["Todos"] + df_prod['Rubro'].unique().tolist()
+        marcas = ["Todos"] + df_prod['Marca'].unique().tolist()
+        
+        # Creamos un diccionario {ID_Proveedor: Razon_Social} para cruzar datos si tu tabla PRODUCTOS guarda el ID
+        # Nota: Ajusta si tu tabla PRODUCTOS guarda directamente el nombre o el ID.
+        provs = ["Todos"] + df_prov['Razon_Social'].tolist()
+        
+        filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros)
+        filtro_marca = c2.selectbox("Filtrar por Marca", marcas)
+        filtro_prov = c3.selectbox("Filtrar por Proveedor", provs)
+        
+        # Inicializamos la copia para aplicar filtros consecutivos
+        df_f = df_prod.copy()
+        
+        # --- FILTRADO ACUMULATIVO (CONSECUTIVO) ---
+        
+        # Filtro 1: Búsqueda por texto (si hay algo escrito)
+        if busqueda_texto:
+            busqueda_texto = busqueda_texto.lower()
+            mask = df_f['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
+                   df_f['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
+            df_f = df_f[mask]
+        
+        # Filtro 2: Rubro
+        if filtro_rubro != "Todos":
+            df_f = df_f[df_f['Rubro'] == filtro_rubro]
+            
+        # Filtro 3: Marca
+        if filtro_marca != "Todos":
+            df_f = df_f[df_f['Marca'] == filtro_marca]
+            
+        # Filtro 4: Proveedor (Mapeando la Razón Social seleccionada al ID o columna correspondiente)
+        if filtro_prov != "Todos":
+            # Si tu tabla PRODUCTOS usa directamente el nombre del proveedor en una columna 'Proveedor' o 'Razon_Social':
+            if 'Proveedor' in df_f.columns:
+                df_f = df_f[df_f['Proveedor'] == filtro_prov]
+            elif 'ID_Proveedor' in df_f.columns:
+                # Buscamos el ID que corresponde a esa Razón Social
+                prov_sel = df_prov[df_prov['Razon_Social'] == filtro_prov]
+                if not prov_sel.empty:
+                    id_prov_buscado = prov_sel.iloc[0]['ID_Proveedor']
+                    df_f = df_f[df_f['ID_Proveedor'] == id_prov_buscado]
+        
+        # 2. Cálculos en tiempo real
+        df_f['Faltante_Min'] = (df_f['Stock_Min'] - df_f['Stock_Actual']).clip(lower=0)
+        df_f['Faltante_Max'] = (df_f['Stock_Max'] - df_f['Stock_Actual']).clip(lower=0)
+        
+        # Mostrar tabla
+        st.dataframe(df_f[['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']], width='stretch')
+        
+        # 3. Acciones (Exportación)
+        col_exp1, col_exp2 = st.columns(2)
+        
+        # Exportar a Excel
+        import io
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_f.to_excel(writer, index=False)
+        
+        col_exp1.download_button(
+            label="📥 Exportar a Excel", 
+            data=buffer.getvalue(), 
+            file_name="reporte_stock.xlsx", 
+            mime="application/vnd.ms-excel"
+        )
+        
+        # Preparar mensaje WhatsApp
+        if col_exp2.button("💬 Generar Resumen para WhatsApp"):
+            mensaje = "🛒 *Pedido Sugerido (Faltantes a Mínimo):*\n"
+            faltantes = df_f[df_f['Faltante_Min'] > 0]
+            for _, item in faltantes.iterrows():
+                mensaje += f"- {item['Nombre']}: Faltan {item['Faltante_Min']}\n"
+            
+            st.text_area("Copia este mensaje para WhatsApp:", value=mensaje)
+
+        # 4. Botón de Mantenimiento
+        if st.button("🔄 RECALCULAR STOCK MÍNIMO/MÁXIMO"):
+            with st.spinner("Calculando rotación de 60 días..."):
+                if calcular_y_actualizar_stock_automatico():
+                    st.success("¡Stock mínimo y máximo actualizado!")
+                    st.rerun()
 
     # =====================================================================
     # MODULO: 🚚 PROVEEDORES
     # =====================================================================
-    if menu == "🚚 Proveedores":
+    elif menu == "🚚 Proveedores":
         st.title("🚚 Gestión de Proveedores")
         
         # 1. Carga de datos desde Supabase
@@ -3149,135 +3199,6 @@ else:
                 st.info("No hay vendedores registrados.")
 
     # =====================================================================
-    # MODULO: 💰 CAJA
-    # =====================================================================
-    elif menu == "💰 Caja":
-        st.title("💰 Gestión de Caja")
-        
-        # 1. Obtenemos estado
-        turno_actual = obtener_turno_activo() 
-        
-        # Reducimos los tabs únicamente a las dos vistas útiles
-        tab_turno, tab_explorar = st.tabs(["🕒 Turno Actual", "🔍 Explorador"])
-        
-        with tab_turno:
-            if turno_actual is None:
-                st.warning("⚠️ No hay ningún turno abierto.")
-                monto_inicial = st.number_input("Ingrese monto de apertura (efectivo inicial)", min_value=0.0)
-                if st.button("🚀 Abrir Turno"):
-                    iniciar_turno(monto_inicial, "Martin")
-                    st.rerun()
-            else:
-                st.success(f"✅ Turno Activo: {turno_actual['ID_Turno']}")
-                
-                with st.expander("🔒 Finalizar Turno"):
-                    with st.form("form_cierre"):
-                        monto_cierre = st.number_input("Monto final en caja", min_value=0.0)
-                        if st.form_submit_button("Confirmar Cierre"):
-                            # A. Cerrar turno en CONTROL_TURNOS
-                            db.table("CONTROL_TURNOS").update({
-                                "Fecha_Hora_Cierre": datetime.now().isoformat(),
-                                "Monto_Cierre_Declarado": float(monto_cierre),
-                                "Estado": "Cerrado"
-                            }).eq("ID_Turno", turno_actual['ID_Turno']).execute()
-                            
-                            # B. Registrar egreso en CAJA
-                            db.table("CAJA").insert({
-                                "Fecha": datetime.now().isoformat(),
-                                "Tipo": "Egreso",
-                                "Concepto": "CIERRE CAJA DIARIO",
-                                "Monto": float(monto_cierre),
-                                "Forma_Pago": "Efectivo",
-                                "ID_Turno": turno_actual['ID_Turno']
-                            }).execute()
-                            st.success("Turno cerrado correctamente.")
-                            st.rerun()
-
-        with tab_explorar:
-            # Carga datos
-            try:
-                res_caja = db.table("CAJA").select("*").execute()
-                df_caja = pd.DataFrame(res_caja.data)
-            except Exception:
-                df_caja = pd.DataFrame()
-
-            fecha_sel = st.date_input("Consultar fecha", datetime.now())
-            
-            if not df_caja.empty:
-                df_caja['Fecha'] = pd.to_datetime(df_caja['Fecha'])
-                df_filtrado = df_caja[df_caja['Fecha'].dt.date == fecha_sel]
-            else:
-                df_filtrado = pd.DataFrame() # Tabla vacía si no hay datos
-
-            # --- MOSTRAR MÉTRICAS (SOLO SALDO) ---
-            col_saldo = st.columns(1)
-            
-            if not df_filtrado.empty:
-                ingresos = df_filtrado[df_filtrado['Tipo'] == 'Ingreso']['Monto'].sum()
-                egresos = df_filtrado[df_filtrado['Tipo'] == 'Egreso']['Monto'].sum()
-                saldo_final = ingresos - egresos
-            else:
-                saldo_final = 0.0
-            
-            # Mostramos únicamente la métrica del saldo
-            st.metric("Saldo", f"${saldo_final:,.2f}")
-            
-            st.divider() # Un separador visual para que quede más prolijo
-
-            # --- MOSTRAR TABLA O AVISO ---
-            if not df_filtrado.empty:
-                # Definimos las columnas que SÍ queremos mostrar
-                columnas_a_mostrar = ['Fecha', 'Tipo', 'Concepto', 'Monto', 'Forma_Pago']
-                
-                # Renderizamos solo esas columnas y ocultamos el índice
-                st.dataframe(
-                    df_filtrado[columnas_a_mostrar], 
-                    width='stretch', 
-                    hide_index=True  # Esto oculta el número de fila a la izquierda
-                )
-            else:
-                st.info("No hay movimientos registrados para la fecha seleccionada.")
-
-            # --- REGISTRO MANUAL (Fuera del if para que siempre se vea) ---
-            with st.expander("➕ Registrar Movimiento Manual"):
-                conceptos_data = db.table("LISTA_CONCEPTOS").select("CONCEPTO").execute().data
-                lista_c = [c['CONCEPTO'] for c in conceptos_data]
-                
-                with st.form("nuevo_movimiento", clear_on_submit=True):
-                    concepto = st.selectbox("Concepto", lista_c)
-                    tipo = st.radio("Tipo", ["Ingreso", "Egreso"])
-                    importe = st.number_input("Importe", min_value=0.0)
-                    forma_pago = st.selectbox("Forma de Pago", ["Efectivo", "Crédito", "Débito", "Transferencia"])
-                    
-                    if st.form_submit_button("Guardar"):
-                        db.table("CAJA").insert({
-                            "ID_Turno": turno_actual['ID_Turno'] if turno_actual else "SIN_TURNO",
-                            "Fecha": datetime.now().isoformat(),
-                            "Tipo": tipo,
-                            "Concepto": concepto,
-                            "Monto": float(importe),
-                            "Forma_Pago": forma_pago
-                        }).execute()
-                        
-                        if tipo == "Ingreso" and forma_pago != "Efectivo":
-                            db.table("CAJA").insert({
-                                "ID_Turno": turno_actual['ID_Turno'] if turno_actual else "SIN_TURNO",
-                                "Fecha": datetime.now().isoformat(),
-                                "Tipo": "Egreso",
-                                "Concepto": f"RETIRO PAGO {forma_pago.upper()}",
-                                "Monto": float(importe),
-                                "Forma_Pago": forma_pago
-                            }).execute()
-                        st.success("✅ Registro realizado.")
-                        st.rerun()
-
-    # =====================================================================
-    # MODULO: 📈 REPORTE DE UTILIDADES
-    # =====================================================================
-    elif menu == "📈 Reporte de Utilidades":
-        mostrar_reporte_utilidad()
-
-    # =====================================================================
     # MODULO: ⚙️ AUDITORÍA
     # =====================================================================
     elif menu == "⚙️ Auditoría":
@@ -3337,3 +3258,82 @@ else:
                 
         except Exception as e:
             st.error(f"Error al consultar la tabla de auditoría: {e}")
+
+    # =====================================================================
+    # MODULO: 📈 REPORTE DE UTILIDADES
+    # =====================================================================
+    elif menu == "📈 Reporte de Utilidades":
+        mostrar_reporte_utilidad()
+
+    # =====================================================================
+    # MODULO: 🚚 GESTION DE REPARTOS
+    # =====================================================================
+    elif menu == "🚚 Gestión de Repartos":
+        
+        # Obtenemos ventas pendientes de reparto
+        ventas_reparto = db.table("VENTAS_PENDIENTES") \
+                        .select("*") \
+                        .eq("Forma_Entrega", "Reparto") \
+                        .execute().data
+        
+        if not ventas_reparto:
+            st.info("No hay repartos pendientes.")
+        else:
+            df = pd.DataFrame(ventas_reparto)
+            df['Fecha_Entrega'] = pd.to_datetime(df['Fecha_Entrega']).dt.date
+            df = df.sort_values(by='Fecha_Entrega')
+            
+            # 1. Calculamos el total general
+            total_general = len(df)
+            
+            # 2. Título con el número integrado entre paréntesis
+            st.markdown(f"## 🗺️ Planificación de Repartos ({total_general})")
+            st.divider()
+            
+            # Recuperamos el rol del usuario actual
+            rol_usuario = st.session_state.get('rol', 'Vendedor')
+            
+            # 3. Agrupamos por fecha
+            for fecha, grupo in df.groupby('Fecha_Entrega'):
+                # Título del día con su propio contador entre paréntesis
+                st.subheader(f"📅 {fecha} ({len(grupo)})")
+                
+                # --- CONTROL DE ACCESO POR ROL ---
+                # Solo el Administrador puede configurar el origen y generar el diagrama optimizado
+                if rol_usuario == "Administrador":
+                    with st.expander(f"⚙️ Configurar Origen para {fecha}"):
+                        opciones = {"Pañalera (Local)": (-24.793734909695726, -65.42769672376464), "Otro (Link de Maps)": "link"}
+                        sel_origen = st.selectbox("¿Desde dónde sale el reparto?", list(opciones.keys()), key=f"sel_{fecha}")
+                        
+                        if sel_origen == "Otro (Link de Maps)":
+                            link_maps = st.text_input("Pega el link de Google Maps aquí:")
+                            if link_maps:
+                                coords = extraer_coords_desde_link(link_maps)
+                                if coords:
+                                    st.success(f"Coordenadas detectadas: {coords}")
+                                    punto_partida = coords
+                                else:
+                                    st.error("No pude leer el link. Asegúrate de copiarlo desde el botón 'Compartir' de Google Maps.")
+                                    punto_partida = (-24.7825, -65.4111) # Default
+                        else:
+                            punto_partida = opciones[sel_origen]
+
+                    # Botón de optimización
+                    if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
+                        st.session_state[f"mostrar_diagrama_{fecha}"] = True
+                    
+                    # Si la bandera es True, mostramos el mapa interactivo
+                    if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
+                        generar_diagrama_optimizada(grupo, punto_partida, fecha)
+                
+                # 3. Iteramos sobre los repartos de ESE día (Visible para TODOS los roles)
+                for _, v in grupo.iterrows():
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([2, 2, 1])
+                        c1.write(f"👤 **Cliente:** {v['Cliente']}")
+                        c2.write(f"📍 **Dir:** {v['Direccion_Entrega']}")
+                        
+                        if v.get('Link_Maps_Entrega'):
+                            c3.link_button("📍 Maps", v['Link_Maps_Entrega'])
+                        
+                        st.caption(f"💰 {v['Metodo_Pago']}")    
