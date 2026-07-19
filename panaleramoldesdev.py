@@ -877,7 +877,8 @@ else:
                     dir3 = st.text_input("Dirección 3")
                     link3 = st.text_input("Link Dirección 3")
                     zona = st.selectbox("Zona*", ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"])
-                    tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "EMPRESA/ORGANISMO"])
+                    # 🔥 LISTA ACTUALIZADA Y UNIFICADA
+                    tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"])
                 
                 submitted = st.form_submit_button("Guardar Cliente")
                 
@@ -899,10 +900,8 @@ else:
                             # 1. Insertamos el cliente y capturamos la respuesta de Supabase
                             resultado = db.table("CLIENTES").insert(nuevo_cliente).execute()
                             
-                            # Obtener el ID generado (asumiendo que tu columna clave primaria se llama 'ID_Cliente' o 'id')
                             id_cliente_generado = "N/A"
                             if resultado.data:
-                                # Buscamos la columna ID que use tu tabla (cambiala por 'id' si está en minúsculas)
                                 id_cliente_generado = resultado.data[0].get('ID_Cliente', resultado.data[0].get('id', 'N/A'))
                             
                             # 2. Recuperamos el usuario logueado
@@ -937,16 +936,14 @@ else:
             with tab_modificar:
                 st.subheader("Modificar Cliente Existente")
 
-                # 1. Selector (Mover esto fuera del 'if seleccion')
+                # 1. Selector
                 lista_clientes = df_clientes['Nombre'].astype(str) + " " + df_clientes['Apellido'].astype(str) + " (ID: " + df_clientes['ID_Cliente'].astype(str) + ")"
                 seleccion = st.selectbox("Seleccione el cliente", [""] + lista_clientes.tolist(), key="sel_modificar")
                 
-                # Ahora evaluamos seleccion aquí:
                 if seleccion:
                     id_modificar = seleccion.split("(ID: ")[1].replace(")", "")
                     fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
 
-                    # --- AQUÍ ES DONDE DEBE IR ---
                     # Primero buscamos si tiene gift card activa
                     gc_data = db.table("GIFT_CARDS").select("*").eq("ID_Cliente", int(id_modificar)).eq("Estado", True).execute().data
                     
@@ -958,13 +955,10 @@ else:
                         - Saldo Actual: ${gc['Saldo_Actual']:,.2f}
                         - Pagada con: {gc['Forma_Pago_Adquisicion']}
                         """)
-                    # -----------------------------
                     
-                    # --- NUEVO: BOTÓN ASIGNAR GIFT CARD (ESTO SOLO LO VE EL ADMINISTRADOR) ---
                     if st.session_state.get('rol') == "Administrador":
                         if st.button("🎁 Gestionar Gift Card"):
                             abrir_asignacion_gift_card(id_modificar, f"{fila['Nombre']} {fila['Apellido']}")
-                    # --------------------------------------------------------------------------
 
                     # 2. Formulario
                     with st.form("form_datos"):
@@ -991,8 +985,9 @@ else:
                         idx_zona = zonas_lista.index(fila.get('Zona')) if fila.get('Zona') in zonas_lista else 0
                         input_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
                         
-                        tipos_lista = ["CONSUMIDOR FINAL", "MAYORISTA"]
-                        idx_tipo = 0 if fila.get('Tipo_Cliente') == "CONSUMIDOR FINAL" else 1
+                        # 🔥 NUEVA LISTA Y LÓGICA DE DETECCIÓN INDEXADA UNIFICADA
+                        tipos_lista = ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"]
+                        idx_tipo = tipos_lista.index(fila.get('Tipo_Cliente')) if fila.get('Tipo_Cliente') in tipos_lista else 0
                         input_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
                         
                         guardar_btn = st.form_submit_button("Guardar Cambios")
@@ -1002,7 +997,6 @@ else:
                         usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
                         
                         try:
-                            # 1. Ejecutamos la actualización
                             db.table("CLIENTES").update({
                                 "Nombre": str(nuevo_nombre or "").upper(),
                                 "Apellido": (nuevo_apellido or "").upper(),
@@ -1021,7 +1015,6 @@ else:
                                 "Tipo_Cliente": input_tipo
                             }).eq("ID_Cliente", int(id_modificar)).execute()
                             
-                            # 2. 🔥 LOG DE AUDITORÍA (Modificación de Cliente)
                             log_auditoria(
                                 tabla="CLIENTES",
                                 accion="UPDATE",
@@ -1050,7 +1043,7 @@ else:
                         except Exception as e:
                             st.error(f"Error al modificar el cliente: {e}")
 
-                    # ACCIÓN DE ELIMINAR (FUERA DEL FORM Y CON KEY ÚNICA)
+                    # ACCIÓN DE ELIMINAR
                     st.divider()
                     if st.session_state.get('rol') == "Administrador":
                         confirmar_del = st.checkbox("Confirmar eliminación", key="check_del_final")
@@ -1059,15 +1052,13 @@ else:
                                 usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
                                 
                                 try:
-                                    # 1. Ejecutamos la eliminación
                                     db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
                                     
-                                    # 2. 🔥 LOG DE AUDITORÍA (Eliminación de Cliente)
                                     log_auditoria(
                                         tabla="CLIENTES",
                                         accion="DELETE",
                                         id_entidad=id_modificar,
-                                        detalles={
+                                        details={
                                             "operacion": "Eliminar Cliente",
                                             "cliente_eliminado": f"{fila.get('Apellido')}, {fila.get('Nombre')}",
                                             "dni_cuit": fila.get('CUIT') if fila.get('CUIT') else fila.get('DNI'),
