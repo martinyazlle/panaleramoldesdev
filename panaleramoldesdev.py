@@ -868,6 +868,8 @@ else:
                     apellido = st.text_input("Apellido*")
                     dni = st.text_input("DNI", max_chars=8)
                     cuit = st.text_input("CUIT", max_chars=13)
+                    # 🔥 NUEVO CAMPO: Agregado directamente al formulario de alta
+                    razon_social = st.text_input("Razón Social")
                     telefono = st.text_input("Teléfono* (10 dígitos)", max_chars=10)
                 with c2:
                     dir1 = st.text_input("Dirección 1*")
@@ -877,7 +879,6 @@ else:
                     dir3 = st.text_input("Dirección 3")
                     link3 = st.text_input("Link Dirección 3")
                     zona = st.selectbox("Zona*", ["NORTE", "SUR", "CENTRO", "ESTE", "OESTE", "SANLO CHICO"])
-                    # 🔥 LISTA ACTUALIZADA Y UNIFICADA
                     tipo = st.selectbox("Tipo Cliente", ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"])
                 
                 submitted = st.form_submit_button("Guardar Cliente")
@@ -889,11 +890,21 @@ else:
                         st.error("⚠️ Ya existe un cliente con este teléfono!")
                     else:
                         nuevo_cliente = {
-                            "Nombre": nombre.upper(), "Apellido": apellido.upper(), "DNI": dni,
-                            "CUIT": cuit, "Telefono": telefono, "Direccion_1": dir1.upper(),
-                            "Direccion_2": dir2.upper(), "Direccion_3": dir3.upper(),
-                            "Link_Direccion_1": link1, "Link_Direccion_2": link2,
-                            "Link_Direccion_3": link3, "Zona": zona, "Tipo_Cliente": tipo
+                            "Nombre": nombre.upper(), 
+                            "Apellido": apellido.upper(), 
+                            "DNI": dni,
+                            "CUIT": cuit, 
+                            # 🔥 SE INCLUYE EN EL DICCIONARIO (Se guarda en Mayúsculas)
+                            "Razón Social": razon_social.upper() if razon_social else "",
+                            "Telefono": telefono, 
+                            "Direccion_1": dir1.upper(),
+                            "Direccion_2": dir2.upper(), 
+                            "Direccion_3": dir3.upper(),
+                            "Link_Direccion_1": link1, 
+                            "Link_Direccion_2": link2,
+                            "Link_Direccion_3": link3, 
+                            "Zona": zona, 
+                            "Tipo_Cliente": tipo
                         }
                         
                         try:
@@ -907,7 +918,7 @@ else:
                             # 2. Recuperamos el usuario logueado
                             usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
                             
-                            # 3. 🔥 LOG DE AUDITORÍA (Alta de Cliente)
+                            # 3. 🔥 LOG DE AUDITORÍA (Alta de Cliente con Razón Social)
                             log_auditoria(
                                 tabla="CLIENTES",
                                 accion="INSERT",
@@ -916,6 +927,7 @@ else:
                                     "operacion": "Alta de Cliente",
                                     "datos_cliente": {
                                         "nombre_completo": f"{apellido.upper()}, {nombre.upper()}",
+                                        "razon_social": razon_social.upper() if razon_social else "N/A",
                                         "telefono": telefono,
                                         "dni_cuit": cuit if cuit else dni,
                                         "zona": zona,
