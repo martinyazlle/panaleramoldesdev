@@ -967,11 +967,19 @@ else:
             with tab_modificar:
                 st.subheader("Modificar Cliente Existente")
 
-                # 1. Selector
-                lista_clientes = df_clientes['Nombre'].astype(str) + " " + df_clientes['Apellido'].astype(str) + " (ID: " + df_clientes['ID_Cliente'].astype(str) + ")"
+                # --- 1. SELECTOR DINÁMICO (SOPORTA PERSONAS Y EMPRESAS) ---
+                # Evaluamos fila por fila para armar un texto descriptivo correcto
+                lista_clientes = df_clientes.apply(
+                    lambda row: f"{str(row['Razón Social']).strip()} (ID: {row['ID_Cliente']})"
+                    if pd.notna(row.get('Razón Social')) and str(row.get('Razón Social')).strip() != ""
+                    else f"{row['Nombre']} {row['Apellido']} (ID: {row['ID_Cliente']})",
+                    axis=1
+                )
+                
                 seleccion = st.selectbox("Seleccione el cliente", [""] + lista_clientes.tolist(), key="sel_modificar")
                 
                 if seleccion:
+                    # La extracción del ID sigue funcionando igual porque mantuvimos el patrón "(ID: " al final
                     id_modificar = seleccion.split("(ID: ")[1].replace(")", "")
                     fila = df_clientes[df_clientes['ID_Cliente'].astype(str) == id_modificar].iloc[0]
 
@@ -989,7 +997,9 @@ else:
                     
                     if st.session_state.get('rol') == "Administrador":
                         if st.button("🎁 Gestionar Gift Card"):
-                            abrir_asignacion_gift_card(id_modificar, f"{fila['Nombre']} {fila['Apellido']}")
+                            # Adaptamos también el nombre que se le pasa al diálogo de la Gift Card
+                            nombre_para_gc = str(fila['Razón Social']).upper() if pd.notna(fila.get('Razón Social')) and str(fila.get('Razón Social')).strip() != "" else f"{fila['Nombre']} {fila['Apellido']}"
+                            abrir_asignacion_gift_card(id_modificar, nombre_para_gc)
 
                     # 2. Formulario
                     with st.form("form_datos"):
@@ -1016,7 +1026,6 @@ else:
                         idx_zona = zonas_lista.index(fila.get('Zona')) if fila.get('Zona') in zonas_lista else 0
                         input_zona = st.selectbox("Zona", zonas_lista, index=idx_zona)
                         
-                        # 🔥 NUEVA LISTA Y LÓGICA DE DETECCIÓN INDEXADA UNIFICADA
                         tipos_lista = ["CONSUMIDOR FINAL", "MAYORISTA", "EMPRESA/ORGANISMO"]
                         idx_tipo = tipos_lista.index(fila.get('Tipo_Cliente')) if fila.get('Tipo_Cliente') in tipos_lista else 0
                         input_tipo = st.selectbox("Tipo Cliente", tipos_lista, index=idx_tipo)
@@ -1046,6 +1055,10 @@ else:
                                 "Tipo_Cliente": input_tipo
                             }).eq("ID_Cliente", int(id_modificar)).execute()
                             
+                            # Log de auditoría adaptado para contemplar si es empresa o persona en el texto descriptivo
+                            nombre_antiguo = fila.get('Razón Social') if fila.get('Razón Social') else f"{fila.get('Apellido')}, {fila.get('Nombre')}"
+                            nombre_nuevo = nueva_razon.upper() if nueva_razon else f"{nuevo_apellido.upper()}, {nuevo_nombre.upper()}"
+
                             log_auditoria(
                                 tabla="CLIENTES",
                                 accion="UPDATE",
@@ -1053,13 +1066,13 @@ else:
                                 detalles={
                                     "operacion": "Modificar Cliente",
                                     "antes": {
-                                        "nombre_completo": f"{fila.get('Apellido')}, {fila.get('Nombre')}",
+                                        "nombre_comercial_o_completo": nombre_antiguo,
                                         "telefono": fila.get('Telefono'),
                                         "zona": fila.get('Zona'),
                                         "direccion_1": fila.get('Direccion_1')
                                     },
                                     "despues": {
-                                        "nombre_completo": f"{nuevo_apellido.upper()}, {nuevo_nombre.upper()}",
+                                        "nombre_comercial_o_completo": nombre_nuevo,
                                         "telefono": nuevo_telefono,
                                         "zona": input_zona,
                                         "direccion_1": nuevo_dir1.upper()
@@ -1085,13 +1098,15 @@ else:
                                 try:
                                     db.table("CLIENTES").delete().eq("ID_Cliente", int(id_modificar)).execute()
                                     
+                                    cliente_identificador = fila.get('Razón Social') if fila.get('Razón Social') else f"{fila.get('Apellido')}, {fila.get('Nombre')}"
+
                                     log_auditoria(
                                         tabla="CLIENTES",
                                         accion="DELETE",
                                         id_entidad=id_modificar,
                                         details={
                                             "operacion": "Eliminar Cliente",
-                                            "cliente_eliminado": f"{fila.get('Apellido')}, {fila.get('Nombre')}",
+                                            "cliente_eliminado": cliente_identificador,
                                             "dni_cuit": fila.get('CUIT') if fila.get('CUIT') else fila.get('DNI'),
                                             "telefono": fila.get('Telefono')
                                         },
