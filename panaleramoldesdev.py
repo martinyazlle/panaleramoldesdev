@@ -1791,25 +1791,46 @@ else:
         c1, c2, c3 = st.columns(3)
         rubros = ["Todos"] + df_prod['Rubro'].unique().tolist()
         marcas = ["Todos"] + df_prod['Marca'].unique().tolist()
+        
+        # Creamos un diccionario {ID_Proveedor: Razon_Social} para cruzar datos si tu tabla PRODUCTOS guarda el ID
+        # Nota: Ajusta si tu tabla PRODUCTOS guarda directamente el nombre o el ID.
         provs = ["Todos"] + df_prov['Razon_Social'].tolist()
         
         filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros)
         filtro_marca = c2.selectbox("Filtrar por Marca", marcas)
         filtro_prov = c3.selectbox("Filtrar por Proveedor", provs)
         
-        # Aplicar filtros
+        # Inicializamos la copia para aplicar filtros consecutivos
         df_f = df_prod.copy()
         
-        # 1. Filtro de texto flexible (busca en Nombre y en ID)
+        # --- FILTRADO ACUMULATIVO (CONSECUTIVO) ---
+        
+        # Filtro 1: Búsqueda por texto (si hay algo escrito)
         if busqueda_texto:
             busqueda_texto = busqueda_texto.lower()
             mask = df_f['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
                    df_f['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
             df_f = df_f[mask]
-        else:
-            # Si no hay buscador, aplicamos los filtros normales
-            if filtro_rubro != "Todos": df_f = df_f[df_f['Rubro'] == filtro_rubro]
-            if filtro_marca != "Todos": df_f = df_f[df_f['Marca'] == filtro_marca]
+        
+        # Filtro 2: Rubro
+        if filtro_rubro != "Todos":
+            df_f = df_f[df_f['Rubro'] == filtro_rubro]
+            
+        # Filtro 3: Marca
+        if filtro_marca != "Todos":
+            df_f = df_f[df_f['Marca'] == filtro_marca]
+            
+        # Filtro 4: Proveedor (Mapeando la Razón Social seleccionada al ID o columna correspondiente)
+        if filtro_prov != "Todos":
+            # Si tu tabla PRODUCTOS usa directamente el nombre del proveedor en una columna 'Proveedor' o 'Razon_Social':
+            if 'Proveedor' in df_f.columns:
+                df_f = df_f[df_f['Proveedor'] == filtro_prov]
+            elif 'ID_Proveedor' in df_f.columns:
+                # Buscamos el ID que corresponde a esa Razón Social
+                prov_sel = df_prov[df_prov['Razon_Social'] == filtro_prov]
+                if not prov_sel.empty:
+                    id_prov_buscado = prov_sel.iloc[0]['ID_Proveedor']
+                    df_f = df_f[df_f['ID_Proveedor'] == id_prov_buscado]
         
         # 2. Cálculos en tiempo real
         df_f['Faltante_Min'] = (df_f['Stock_Min'] - df_f['Stock_Actual']).clip(lower=0)
@@ -1824,7 +1845,6 @@ else:
         # Exportar a Excel
         import io
         buffer = io.BytesIO()
-        # Usamos un escritor para manejar el archivo en memoria
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df_f.to_excel(writer, index=False)
         
@@ -1844,7 +1864,7 @@ else:
             
             st.text_area("Copia este mensaje para WhatsApp:", value=mensaje)
 
-        # 4. Botón de Mantenimiento (El motor que hicimos antes)
+        # 4. Botón de Mantenimiento
         if st.button("🔄 RECALCULAR STOCK MÍNIMO/MÁXIMO"):
             with st.spinner("Calculando rotación de 60 días..."):
                 if calcular_y_actualizar_stock_automatico():
