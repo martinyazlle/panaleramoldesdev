@@ -1030,6 +1030,7 @@ else:
                                         st.session_state.direccion_entrega = v.get('Direccion_Entrega', 'N/A')
                                         st.session_state.link_maps_entrega = v.get('Link_Maps_Entrega', 'N/A')
                                         st.session_state.fecha_reparto = v.get('Fecha_Entrega', str(datetime.today().date()))
+                                        st.session_state.observaciones_entrega = v.get('Observaciones', '')
                                         st.rerun() 
                                 
                                 with btn_col2:
@@ -1375,6 +1376,7 @@ else:
             # Inicializamos valores con lo que traemos de la venta recuperada
             direccion_elegida = st.session_state.get("direccion_entrega", "N/A")
             link_elegido = st.session_state.get("link_maps_entrega", "N/A")
+            obs_recuperada = st.session_state.get("observaciones_entrega", "") # 👈 1. RECUPERAMOS NOTA DE SESSION_STATE
 
             if tipo_entrega == "Reparto":
                 opciones_map = {}
@@ -1397,12 +1399,20 @@ else:
                     link_elegido = opciones_map[seleccion]
                 else:
                     direccion_elegida = col_e2.text_input("Dirección de entrega", value=direccion_elegida)
-            
+
+            # 👈 2. NUEVO CAMPO VISUAL DE OBSERVACIONES
+            observaciones_vta = st.text_input(
+                "📝 Observaciones / Notas para el Repartidor", 
+                value=obs_recuperada,
+                placeholder="Ej: Pasar antes de las 16hs, llamar al timbre 2B, cobro exacto..."
+            )
+
             # Actualizamos el estado
             st.session_state.tipo_entrega = tipo_entrega
             st.session_state.fecha_reparto = str(fecha_reparto)
             st.session_state.direccion_entrega = direccion_elegida
             st.session_state.link_maps_entrega = link_elegido
+            st.session_state.observaciones_entrega = observaciones_vta # 👈 3. GUARDAMOS EN SESSION_STATE
 
         # --- 6. BOTONES DE CIERRE (CORREGIDO) ---
             st.divider()
@@ -1447,12 +1457,12 @@ else:
                             "ID_Venta": id_v,
                             "Fecha": f,
                             "ID_Cliente": id_cliente_final,
-                            # 🔥 CORRECCIÓN AQUÍ: Guardamos el ID del vendedor que se seleccionó arriba en la interfaz
                             "ID_Vendedor": vendedor_id_final, 
                             "Forma_Pago": desglose_pagos,
                             "Total": total_final_vta,
                             "Forma_Entrega": st.session_state.tipo_entrega,
-                            "Direccion_Entrega": st.session_state.direccion_entrega if st.session_state.tipo_entrega == "Reparto" else "N/A"
+                            "Direccion_Entrega": st.session_state.direccion_entrega if st.session_state.tipo_entrega == "Reparto" else "N/A",
+                            "Observaciones": st.session_state.get('observaciones_entrega', '') # 👈 AGREGAR AQUÍ
                         }).execute()
                         
                         for art in st.session_state.carrito_vta:
@@ -1531,6 +1541,7 @@ else:
                         st.success("✅ Venta registrada correctamente!")
                         st.session_state.carrito_vta = []
                         st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
+                        st.session_state.observaciones_entrega = ""
                         st.rerun()
 
                     except Exception as e:
@@ -1558,7 +1569,6 @@ else:
                             "Hora": datetime.now().strftime('%H:%M:%S'),
                             "Cliente": cliente_nombre_final,
                             "ID_Cliente_Pendiente": id_cliente_final,
-                            # 🔥 CORRECCIÓN AQUÍ: Cambiamos 'vendedor_sel' por 'vendedor_id_final'
                             "Vendedor": vendedor_id_final,
                             "Metodo_Pago": desglose_pagos,
                             "Pagos_JSON": json.dumps(st.session_state.pagos_split),
@@ -1567,7 +1577,7 @@ else:
                             "Direccion_Entrega": st.session_state.direccion_entrega,
                             "Link_Maps_Entrega": link,
                             "Fecha_Entrega": st.session_state.fecha_reparto,
-                            # --- AGREGAMOS LAS NUEVAS COLUMNAS ---
+                            "Observaciones": st.session_state.get('observaciones_entrega', ''), # 👈 AGREGAR AQUÍ
                             "Latitud": lat,
                             "Longitud": lng
                         }
@@ -1589,6 +1599,7 @@ else:
                         # Limpieza post-guardado
                         st.session_state.carrito_vta = []
                         st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
+                        st.session_state.observaciones_entrega = ""
                         if 'id_pendiente_cargado' in st.session_state:
                             del st.session_state.id_pendiente_cargado
                         if 'id_cliente_recuperado' in st.session_state:
@@ -3335,5 +3346,10 @@ else:
                         
                         if v.get('Link_Maps_Entrega'):
                             c3.link_button("📍 Maps", v['Link_Maps_Entrega'])
+                        
+                        # 👈 MOSTRAR OBSERVACIÓN SOLO SI TIENE UN TEXTO VÁLIDO
+                        obs_entrega = v.get('Observaciones', '')
+                        if pd.notna(obs_entrega) and str(obs_entrega).strip() and str(obs_entrega).strip().lower() not in ["nan", "none"]:
+                            st.info(f"📝 **Nota para el repartidor:** {obs_entrega}", icon="📌")
                         
                         st.caption(f"💰 {v['Metodo_Pago']}")    
