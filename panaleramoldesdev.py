@@ -1919,19 +1919,19 @@ else:
     # =====================================================================
     elif menu == "📦 Productos":
         st.title("📦 Gestión de Productos")
-
+    
         # 1. CARGA INICIAL DE DATOS NECESARIOS (PARA TODOS)
         try:
             data = db.table("PRODUCTOS").select("*").execute().data
             df_prod = pd.DataFrame(data)
             
-            # Carga de proveedores (ahora es global para el módulo)
+            # Carga de proveedores
             df_prov = pd.DataFrame(db.table("PROVEEDORES").select("Razon_Social").execute().data)
             lista_proveedores = df_prov['Razon_Social'].tolist() if not df_prov.empty else ["Sin proveedores"]
         except Exception as e:
             st.error(f"Error al conectar con Supabase: {e}")
             st.stop()
-
+    
         # Inicialización de DF si está vacío
         columnas_requeridas = ['ID_Producto', 'Nombre', 'Rubro', 'ID_Proveedor', 'Marca', 
                                'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Precio_Costo', 
@@ -1940,66 +1940,56 @@ else:
             df_prod = pd.DataFrame(columns=columnas_requeridas)
         
         st.session_state.df_prod = df_prod.copy()
-
+    
         # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
         if st.session_state.rol == "Administrador":
-            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar", "✂️ Divisor"])
-            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar, tab_divisor = tabs
+            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar", "✂️ Divisor", "📜 Histórico"])
+            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar, tab_divisor, tab_historico = tabs
         else:
-            # Definimos solo las 3 pestañas y ponemos las otras como None
             tabs = st.tabs(["🔍 Buscar", "🔄 Cambios", "✂️ Divisor"])
             tab_buscar, tab_cambios, tab_divisor = tabs
-            tab_alta, tab_modificar, tab_importar = None, None, None
-            
-        # --- PESTAÑA BUSCAR (Versión Potenciada) ---
+            tab_alta, tab_modificar, tab_importar, tab_historico = None, None, None, None
+    
+        # --- PESTAÑA BUSCAR ---
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
             
-            # 1. Buscador por texto
             busqueda_texto = st.text_input(
                 "Escriba para filtrar por nombre o código:", 
                 placeholder="Ej: pampers, 779...",
                 key="busqueda_tab_buscar"
             )
             
-            # 2. Filtros (Rubro y Marca)
             c1, c2 = st.columns(2)
-            rubros = ["Todos"] + st.session_state.df_prod['Rubro'].unique().tolist()
-            marcas = ["Todos"] + st.session_state.df_prod['Marca'].unique().tolist()
+            rubros = ["Todos"] + [r for r in st.session_state.df_prod['Rubro'].dropna().unique().tolist() if r]
+            marcas = ["Todos"] + [m for m in st.session_state.df_prod['Marca'].dropna().unique().tolist() if m]
             
             filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_tab")
             filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_tab")
             
-            # 3. Aplicar filtros al DF
             df_filtrado = st.session_state.df_prod.copy()
             
-            # Filtro de texto (Nombre o ID)
             if busqueda_texto:
                 busqueda_texto = busqueda_texto.lower()
                 mask = df_filtrado['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
                        df_filtrado['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
                 df_filtrado = df_filtrado[mask]
             
-            # Filtros de selección
             if filtro_rubro != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Rubro'] == filtro_rubro]
             if filtro_marca != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Marca'] == filtro_marca]
-
-            # 4. Ajuste de columnas según rol
+    
             if st.session_state.rol != "Administrador":
                 cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
-                # Verificamos que las columnas existan antes de filtrar para evitar errores
                 df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
-
-            # 5. Mostrar resultado
-            st.dataframe(df_filtrado, width='stretch', hide_index=True)
-
-        # --- PESTAÑA CAMBIOS (Mejorada) ---
+    
+            st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
+    
+        # --- PESTAÑA CAMBIOS ---
         with tab_cambios:
             st.subheader("🔄 Gestión de Cambios y Devoluciones")
-
-            # 1. PANEL ADMINISTRADOR (SIEMPRE VISIBLE PARA ADMIN)
+    
             if st.session_state.get('rol') == "Administrador":
                 st.divider()
                 st.subheader("🛡️ Panel de Supervisión (Admin)")
@@ -2007,7 +1997,6 @@ else:
                 
                 if pendientes:
                     for p in pendientes:
-                        # Estilo más prolijo con una caja (container)
                         with st.container(border=True):
                             c1, c2 = st.columns([3, 1])
                             with c1:
@@ -2020,24 +2009,20 @@ else:
                                 new_tipo = col_b.selectbox("Tipo:", ["ENTRA", "SALE"], index=0 if p['Entra'] > 0 else 1, key=f"tipo_{p['id']}")
                                 new_desc = col_c.text_input("Motivo editado:", value=p['Descripción'], key=f"desc_{p['id']}")
                                 
-                                # Botones alineados en el mismo formulario
                                 btn_col1, btn_col2 = st.columns(2)
-                                if btn_col1.form_submit_button("💾 Aprobar y Procesar", width='stretch'):
-                                    # 1. Obtener datos actuales
+                                if btn_col1.form_submit_button("💾 Aprobar y Procesar", use_container_width=True):
                                     prod_data = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", p['Código']).execute().data
                                     
                                     if prod_data:
                                         stock_viejo = int(prod_data[0]['Stock_Actual'])
                                         stock_nuevo = (stock_viejo + new_cant) if new_tipo == 'ENTRA' else (stock_viejo - new_cant)
                                             
-                                        # 2. Actualizar stock
                                         db.table("PRODUCTOS").update({"Stock_Actual": stock_nuevo}).eq("ID_Producto", p['Código']).execute()
                                         
-                                        # 3. Insertar en CAMBIOS (con nombres de columnas sin espacios)
                                         try:
                                             db.table("CAMBIOS").insert({
                                                 "Fecha": datetime.now().isoformat(),
-                                                "Usuario": st.session_state.get('usuario_actual', 'Administrador'), # <--- AGREGA ESTO
+                                                "Usuario": st.session_state.get('usuario_actual', 'Administrador'),
                                                 "Código": p['Código'],
                                                 "Nombre": p['Nombre'],
                                                 "Descripción": new_desc,
@@ -2047,29 +2032,25 @@ else:
                                                 "existencia_actual": stock_nuevo
                                             }).execute()
                                             
-                                            # 4. Marcar como procesado
                                             db.table("PRE_CAMBIOS").update({"Estado": "PROCESADO"}).eq("id", p['id']).execute()
-                                            
                                             st.success("✅ Stock actualizado correctamente.")
                                             st.rerun()
-
+    
                                         except Exception as e:
                                             st.error(f"Error al insertar en CAMBIOS: {e}")
                                 
-                                if btn_col2.form_submit_button("❌ Rechazar", width='stretch'):
+                                if btn_col2.form_submit_button("❌ Rechazar", use_container_width=True):
                                     db.table("PRE_CAMBIOS").update({"Estado": "RECHAZADO"}).eq("id", p['id']).execute()
                                     st.rerun()
                 else:
                     st.info("No hay cambios pendientes.")
                 st.divider()
             
-            # 1. Inicializar lista de items
             if 'lista_cambios' not in st.session_state:
                 st.session_state.lista_cambios = []
             
-            # 2. Buscador (Solo se muestra para cargar items)
             opciones_productos = (st.session_state.df_prod['Nombre'] + " (ID: " + 
-                                 st.session_state.df_prod['ID_Producto'].astype(str) + ")").tolist()
+                                  st.session_state.df_prod['ID_Producto'].astype(str) + ")").tolist()
             
             prod_seleccionado = st.selectbox("Buscar producto", options=opciones_productos, index=None, placeholder="Escriba para buscar...", key="buscador_cambios")
             
@@ -2090,7 +2071,6 @@ else:
                     })
                     st.rerun()
             
-            # 3. Mostrar resumen y botones de acción
             if st.session_state.lista_cambios:
                 st.write("Resumen del movimiento:")
                 st.table(pd.DataFrame(st.session_state.lista_cambios))
@@ -2100,8 +2080,7 @@ else:
                     st.rerun()
             
                 motivo = st.text_input("Motivo del cambio:")
-                   
-                # PANEL VENDEDOR
+                    
                 if st.button("📤 Enviar Pre-cambio a Revisión"):
                     try:
                         for item in st.session_state.lista_cambios:
@@ -2113,25 +2092,21 @@ else:
                                 "Entra": int(item['Cantidad']) if item['Tipo'] == 'ENTRA' else 0,
                                 "Sale": int(item['Cantidad']) if item['Tipo'] == 'SALE' else 0,
                                 "Estado": "PENDIENTE",
-                                "Usuario": st.session_state.get('usuario_actual', 'Desconocido') # <--- CAMBIA 'usuario' por 'usuario_actual'
+                                "Usuario": st.session_state.get('usuario_actual', 'Desconocido')
                             }).execute()
                         st.success("✅ Enviado a revisión.")
                         st.session_state.lista_cambios = []
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
-
+    
         # --- PESTAÑA DIVISOR ---
         with tab_divisor:
             st.subheader("✂️ Divisor de Fardos")
             
-            # 1. Definimos los patrones de fardo
-            patrones_fardo = [r'\bx12\b', r'\bx24\b', r'\bx30\b', 
-                              r'\bX12\b', r'\bX24\b', r'\bX30\b']
-            
+            patrones_fardo = [r'\bx12\b', r'\bx24\b', r'\bx30\b', r'\bX12\b', r'\bX24\b', r'\bX30\b']
             regex_patron = '|'.join(patrones_fardo)
             
-            # 2. Filtramos: Rubro LECHE + Stock > 0 + Que contenga el patrón exacto como palabra
             df_filtrado_div = st.session_state.df_prod[
                 (st.session_state.df_prod['Rubro'] == 'LECHE') & 
                 (st.session_state.df_prod['Stock_Actual'] > 0) &
@@ -2145,11 +2120,8 @@ else:
                 id_fardo_sel = st.selectbox("Seleccionar Fardo a dividir:", [""] + opciones_prod, key="div_fardo")
                 
                 if id_fardo_sel:
-                    # Guardamos el ID en sesión
                     id_fardo = id_fardo_sel.split(" - ")[0]
                     st.session_state.id_fardo_temp = id_fardo 
-                    
-                    # Guardamos la fila completa en sesión
                     st.session_state.fila_fardo_temp = df_filtrado_div[df_filtrado_div['ID_Producto'].astype(str) == id_fardo].iloc[0]
                     
                     st.info(f"Fardo: {st.session_state.fila_fardo_temp['Nombre']} | Stock: {st.session_state.fila_fardo_temp['Stock_Actual']}")
@@ -2159,29 +2131,24 @@ else:
                         unidades = c1.number_input("¿Cuántas unidades trae el fardo?", min_value=1, value=24)
                         id_cajita = c2.text_input("Código de la Cajita Individual:")
                         
-                        # Usamos los datos de la sesión
                         fila_fardo = st.session_state.fila_fardo_temp
-                        id_fardo = st.session_state.id_fardo_temp # <--- RECUPERAMOS EL ID AQUÍ
+                        id_fardo = st.session_state.id_fardo_temp
                         
-                        costo_fardo = float(fila_fardo['Precio_Costo'])
-                        costo_unitario = costo_fardo / unidades
-                        precio_sugerido = ( (int((costo_unitario * 1.40) // 100) + 1) * 100 )
+                        costo_fardo = float(fila_fardo['Precio_Costo']) if fila_fardo['Precio_Costo'] else 0.0
+                        costo_unitario = costo_fardo / unidades if unidades > 0 else 0
+                        precio_sugerido = ((int((costo_unitario * 1.40) // 100) + 1) * 100)
                         
                         st.write(f"Costo unitario: ${costo_unitario:,.2f} | Precio Sugerido: ${precio_sugerido:,.0f}")
                         
                         if st.form_submit_button("🚀 Confirmar División"):
-                            # --- VALIDACIÓN DE STOCK ---
                             if int(fila_fardo['Stock_Actual']) <= 0:
-                                st.error(f"⚠️ ¡Error! El fardo '{fila_fardo['Nombre']}' no cuenta con existencias para dividir (Stock actual: 0).")
+                                st.error(f"⚠️ ¡Error! El fardo '{fila_fardo['Nombre']}' no cuenta con existencias para dividir.")
                                 st.stop() 
                             
-                            # --- LÓGICA DE ACTUALIZACIÓN ---
                             try:
-                                # Descontar 1 al fardo
                                 nuevo_stock_fardo = int(fila_fardo['Stock_Actual']) - 1
                                 db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", id_fardo).execute()
                                 
-                                # Sumar unidades a la cajita
                                 prod_cajita = db.table("PRODUCTOS").select("Stock_Actual", "Nombre").eq("ID_Producto", id_cajita).execute().data
                                 if not prod_cajita:
                                     st.error("¡Error! El código de la cajita no existe en la base de datos.")
@@ -2192,7 +2159,6 @@ else:
                                 nuevo_stock_cajita = stock_cajita_old + unidades
                                 db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_cajita}).eq("ID_Producto", id_cajita).execute()
                                 
-                                # --- REGISTRO EN CAMBIOS ---
                                 usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
                                 
                                 db.table("CAMBIOS").insert({
@@ -2217,32 +2183,17 @@ else:
                                     "existencia_actual": nuevo_stock_cajita
                                 }).execute()
                                 
-                                # =====================================================================
-                                # 🔥 LOG DE AUDITORÍA (Módulo Divisor de Fardos)
-                                # =====================================================================
                                 log_auditoria(
                                     tabla="PRODUCTOS",
                                     accion="UPDATE",
                                     id_entidad=id_fardo,
                                     detalles={
                                         "operacion": "Divisor de Fardos",
-                                        "fardo": {
-                                            "id": id_fardo,
-                                            "nombre": fila_fardo['Nombre'],
-                                            "stock_anterior": int(fila_fardo['Stock_Actual']),
-                                            "stock_nuevo": nuevo_stock_fardo
-                                        },
-                                        "cajita": {
-                                            "id": id_cajita,
-                                            "nombre": nombre_cajita,
-                                            "unidades_ingresadas": int(unidades),
-                                            "stock_anterior": stock_cajita_old,
-                                            "stock_nuevo": nuevo_stock_cajita
-                                        }
+                                        "fardo": {"id": id_fardo, "nombre": fila_fardo['Nombre'], "stock_nuevo": nuevo_stock_fardo},
+                                        "cajita": {"id": id_cajita, "nombre": nombre_cajita, "unidades_ingresadas": int(unidades), "stock_nuevo": nuevo_stock_cajita}
                                     },
                                     usuario=usuario_logueado
                                 )
-                                # =====================================================================
                                 
                                 st.success(f"✅ ¡División realizada por {usuario_logueado}!")
                                 if 'df_prod' in st.session_state: del st.session_state['df_prod']
@@ -2250,7 +2201,7 @@ else:
                                 
                             except Exception as e:
                                 st.error(f"Error al procesar la división: {e}")
-        
+    
         # --- PESTAÑAS DE ADMINISTRADOR ---
         if st.session_state.rol == "Administrador":
             
@@ -2265,7 +2216,7 @@ else:
                         id_nuevo = st.text_input("Código / ID Producto*", key="alta_id").strip()
                         nombre_nuevo = st.text_input("Descripción / Nombre*", key="alta_nom").strip()
                         marca_nueva = st.text_input("Marca", key="alta_marca").strip()
-                        rubro_nuevo = st.selectbox("Rubro", options=LISTA_RUBROS)
+                        rubro_nuevo = st.selectbox("Rubro", options=LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General"])
                         prov_seleccionado = st.selectbox("Proveedor", options=lista_proveedores)
                         
                     with c_alta2:
@@ -2276,15 +2227,14 @@ else:
                         p3 = st.number_input("Precio Lista 3 ($)", min_value=0.0, value=0.0, step=10.0)
                         p4 = st.number_input("Precio Lista 4 ($)", min_value=0.0, value=0.0, step=10.0)
                         p5 = st.number_input("Precio Lista 5 ($)", min_value=0.0, value=0.0, step=10.0)
-
+    
                     st.caption("* Campos obligatorios")
                     btn_guardar = st.form_submit_button("💾 Guardar Producto en Base de Datos")
-
+    
                 if btn_guardar:
                     if not id_nuevo or not nombre_nuevo or p1 <= 0:
                         st.error("Por favor, completa los campos obligatorios (ID, Nombre y Precio 1 > 0).")
                     else:
-                        # Nos aseguramos de que no envíe strings vacíos a columnas numéricas
                         nuevo_prod = {
                             "ID_Producto": id_nuevo,
                             "Nombre": nombre_nuevo,
@@ -2297,19 +2247,20 @@ else:
                             "Precio_3": float(p3),
                             "Precio_4": float(p4),
                             "Precio_5": float(p5),
-                            "ID_Proveedor": None, # Cambiado a None (null)
-                            "Stock_Min": 0,       # Aseguramos entero 0
-                            "Stock_Max": 0,       # Aseguramos entero 0
-                            "Imagen": None        # Cambiado a None (null)
+                            "ID_Proveedor": None,
+                            "Stock_Min": 0,
+                            "Stock_Max": 0,
+                            "Imagen": None
                         }
                         
                         try:
                             db.table("PRODUCTOS").insert(nuevo_prod).execute()
                             st.success(f"🎉 ¡Producto '{nombre_nuevo}' guardado!")
+                            if 'df_prod' in st.session_state: del st.session_state['df_prod']
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error técnico: {e}")
-
+    
             # --- PESTAÑA MODIFICAR ---
             with tab_modificar:
                 st.subheader("✏️ Modificar Producto Completo")
@@ -2318,38 +2269,33 @@ else:
                     opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
                     prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
                     
-                    # --- AQUÍ DEFINES LAS FUNCIONES UNA SOLA VEZ ---
                     def get_safe(key, fila, default=0, is_float=False):
                         val = fila.get(key)
                         if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
                             return default
                         return float(val) if is_float else int(float(val))
             
-                    # --- CAMBIO CRÍTICO: BLOQUE DE LECTURA SEGURA ---
                     if prod_sel:
                         id_sel = prod_sel.split(" - ")[0]
                         fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
                         
-                        # Asignamos usando la función segura
                         val_stk = get_safe('Stock_Actual', fila, 0)
                         val_min = get_safe('Stock_Min', fila, 0)
                         val_max = get_safe('Stock_Max', fila, 0)
                         val_cos = get_safe('Precio_Costo', fila, 0.0, is_float=True)
                         
-                        # Manejo del proveedor (que puede ser NULL)
                         prov_actual = fila.get('ID_Proveedor')
                         if prov_actual is None or pd.isna(prov_actual):
                             prov_actual = "" 
                         
-                        # FINALMENTE abrimos el formulario con los valores ya saneados
                         with st.form("form_mod_completo"):
                             c1, c2, c3 = st.columns(3)
                             with c1:
                                 n_nom = st.text_input("Nombre", value=str(fila.get('Nombre', '')))
-                                idx_rubro = LISTA_RUBROS.index(fila.get('Rubro')) if fila.get('Rubro') in LISTA_RUBROS else 0
-                                n_rub = st.selectbox("Rubro", options=LISTA_RUBROS, index=idx_rubro)
+                                rubros_lista = LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General"]
+                                idx_rubro = rubros_lista.index(fila.get('Rubro')) if fila.get('Rubro') in rubros_lista else 0
+                                n_rub = st.selectbox("Rubro", options=rubros_lista, index=idx_rubro)
                                 n_mar = st.text_input("Marca", value=str(fila.get('Marca', '')))
-                                prov_actual = fila.get('ID_Proveedor', "")
                                 idx_prov = lista_proveedores.index(prov_actual) if prov_actual in lista_proveedores else 0
                                 n_prov = st.selectbox("Proveedor", options=lista_proveedores, index=idx_prov)
                             with c2:
@@ -2358,34 +2304,31 @@ else:
                                 n_max = st.number_input("Stock Max", value=val_max)
                                 n_img = st.text_input("URL Imagen", value=str(fila.get('Imagen', '')))
                             with c3:
-                                n_cos = st.number_input("Costo", value=asegurar_float(fila.get('Precio_Costo', 0)), format="%.2f")
-                                n_p1 = st.number_input("Precio 1", value=asegurar_float(fila.get('Precio_1', 0)), format="%.2f")
-                                n_p2 = st.number_input("Precio 2", value=asegurar_float(fila.get('Precio_2', 0)), format="%.2f")
-                                n_p3 = st.number_input("Precio 3", value=asegurar_float(fila.get('Precio_3', 0)), format="%.2f")
-                                n_p4 = st.number_input("Precio 4", value=asegurar_float(fila.get('Precio_4', 0)), format="%.2f")
-                                n_p5 = st.number_input("Precio 5", value=asegurar_float(fila.get('Precio_5', 0)), format="%.2f")
+                                n_cos = st.number_input("Costo", value=get_safe('Precio_Costo', fila, 0.0, True), format="%.2f")
+                                n_p1 = st.number_input("Precio 1", value=get_safe('Precio_1', fila, 0.0, True), format="%.2f")
+                                n_p2 = st.number_input("Precio 2", value=get_safe('Precio_2', fila, 0.0, True), format="%.2f")
+                                n_p3 = st.number_input("Precio 3", value=get_safe('Precio_3', fila, 0.0, True), format="%.2f")
+                                n_p4 = st.number_input("Precio 4", value=get_safe('Precio_4', fila, 0.0, True), format="%.2f")
+                                n_p5 = st.number_input("Precio 5", value=get_safe('Precio_5', fila, 0.0, True), format="%.2f")
                             
                             if st.form_submit_button("✅ Guardar Todos los Cambios"):
-                                # Función para limpiar campos de texto: si es "None" o vacío, devuelve None (nulo)
                                 def clean_text(val):
                                     if val is None or val == "" or str(val).lower() == "none":
                                         return None
                                     return str(val)
-
-                                # Función para asegurar número
+    
                                 def clean_num(val, is_float=False):
                                     try:
                                         if val in [None, '', 'None']: return 0.0 if is_float else 0
                                         return float(val) if is_float else int(val)
                                     except:
                                         return 0.0 if is_float else 0
-
-                                # Diccionario corregido
+    
                                 datos_update = {
                                     "Nombre": str(n_nom) if n_nom else "Sin nombre",
                                     "Rubro": clean_text(n_rub),
                                     "Marca": clean_text(n_mar),
-                                    "ID_Proveedor": clean_num(n_prov), # Lo pasamos por clean_num porque es bigint
+                                    "ID_Proveedor": clean_num(n_prov),
                                     "Stock_Actual": clean_num(n_stk),
                                     "Stock_Min": clean_num(n_min),
                                     "Stock_Max": clean_num(n_max),
@@ -2399,12 +2342,8 @@ else:
                                 }
                                 
                                 try:
-                                    # Ejecutamos el update
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
                                     
-                                    # =====================================================================
-                                    # 🔥 LOG DE AUDITORÍA (Módulo Modificaciones Manuales)
-                                    # =====================================================================
                                     log_auditoria(
                                         tabla="PRODUCTOS",
                                         accion="UPDATE",
@@ -2413,28 +2352,26 @@ else:
                                             "motivo": "Modificación manual desde formulario de edición",
                                             "valores_finales": datos_update
                                         },
-                                        usuario="Martin"
+                                        usuario=st.session_state.get('usuario_actual', 'Martin')
                                     )
-                                    # =====================================================================
-
+    
                                     st.success("¡Producto actualizado exitosamente!")
                                     if 'df_prod' in st.session_state: del st.session_state['df_prod']
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Error al actualizar en Supabase: {e}")
-                                    st.write("Datos enviados:", datos_update) # Esto te ayudará a ver qué campo falla exactamente
                 else:
                     st.info("No hay productos para modificar.")
-            # --- PESTAÑA IMPORTAR (Versión Optimizada) ---
+    
+            # --- PESTAÑA IMPORTAR ---
             with tab_importar:
                 st.subheader("📥 Importación Masiva de Productos")
                 st.markdown("Subí un archivo CSV (UTF-8 o Latin-1) o Excel.")
                 
                 archivo = st.file_uploader("Seleccioná el archivo", type=['csv', 'xlsx'])
-
+    
                 if archivo and st.button("🚀 Procesar e Importar"):
                     try:
-                        # 1. Lectura robusta
                         if archivo.name.endswith('.csv'):
                             try:
                                 df_i = pd.read_csv(archivo, encoding='utf-8')
@@ -2443,39 +2380,202 @@ else:
                                 df_i = pd.read_csv(archivo, encoding='latin-1')
                         else:
                             df_i = pd.read_excel(archivo)
-
-                        # --- LIMPIEZA INTELIGENTE ---
-                        
-                        # A. Eliminamos columnas que estén COMPLETAMENTE vacías
+    
                         df_i = df_i.dropna(axis=1, how='all')
-                        
-                        # B. Aseguramos ID como string
                         df_i['ID_Producto'] = df_i['ID_Producto'].astype(str)
                         
-                        # C. Limpieza selectiva: 
-                        # Solo limpiamos los valores NaN en las columnas que SÍ existen en el archivo
                         for col in df_i.columns:
                             if col in ['Stock_Actual', 'Stock_Min', 'Stock_Max']:
                                 df_i[col] = pd.to_numeric(df_i[col], errors='coerce').fillna(0).astype(int)
                             elif 'Precio' in col:
                                 df_i[col] = pd.to_numeric(df_i[col], errors='coerce').fillna(0.0)
                             else:
-                                # Para Nombre, Rubro, etc., rellenamos con texto vacío
                                 df_i[col] = df_i[col].fillna('')
-
-                        # D. Convertir a lista de diccionarios
+    
                         data_to_upsert = df_i.to_dict(orient='records')
-
-                        # E. Importación
                         db.table("PRODUCTOS").upsert(data_to_upsert).execute()
-
+    
                         st.success(f"✅ Importación exitosa: {len(df_i)} productos procesados.")
                         st.balloons()
+                        if 'df_prod' in st.session_state: del st.session_state['df_prod']
                         st.rerun()
-
+    
                     except Exception as e:
                         st.error(f"Error al procesar el archivo: {e}")
-                        st.write("Asegurate de que las columnas coincidan exactamente con: ID_Producto, Nombre, etc.")
+    
+            # =====================================================================
+            # --- PESTAÑA HISTÓRICO DE MOVIMIENTOS (KARDEX) (Solo Administrador) ---
+            # =====================================================================
+            with tab_historico:
+                st.subheader("📜 Histórico de Movimientos por Producto (Kardex)")
+                
+                # 1. Buscador de producto
+                opciones_kardex = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
+                prod_kardex_sel = st.selectbox("Seleccionar producto para auditoría:", [""] + opciones_kardex, key="kardex_prod_sel")
+                
+                # 2. Filtro Rango de Fechas
+                col_f1, col_f2 = st.columns(2)
+                fecha_desde = col_f1.date_input("Fecha Desde:", value=datetime.now() - timedelta(days=30))
+                fecha_hasta = col_f2.date_input("Fecha Hasta:", value=datetime.now())
+                
+                if prod_kardex_sel:
+                    id_kardex = prod_kardex_sel.split(" - ")[0]
+                    str_f_desde = datetime.combine(fecha_desde, datetime.min.time()).isoformat()
+                    str_f_hasta = datetime.combine(fecha_hasta, datetime.max.time()).isoformat()
+                    
+                    # Obtener el stock actual del producto seleccionado (Usando Stock_Actual)
+                    prod_row = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == str(id_kardex)]
+                    stock_actual = int(prod_row['Stock_Actual'].values[0]) if not prod_row.empty else 0
+                    
+                    with st.spinner("Consultando historial unificado..."):
+                        movimientos = []
+                        
+                        # A. Consultar VENTAS
+                        try:
+                            res_v = db.table("VENTAS_DETALLE").select("*, VENTAS_CABECERA(Fecha, Estado, ID_Venta)")\
+                                .eq("ID_Producto", id_kardex).execute().data
+                            
+                            for v in res_v:
+                                cabecera = v.get("VENTAS_CABECERA") or {}
+                                f_v = cabecera.get("Fecha")
+                                if f_v and str_f_desde <= f_v <= str_f_hasta and cabecera.get("Estado") != "CANCELADO":
+                                    cant = int(v.get("Cantidad", 0))
+                                    movimientos.append({
+                                        "Fecha_raw": f_v,
+                                        "Concepto": "🛒 VENTA",
+                                        "ID Referencia": f"ID_Venta: {cabecera.get('ID_Venta', 'S/I')}",
+                                        "Variación": -cant,
+                                        "Detalle / Observaciones": f"Venta realizada ({cant} un.)"
+                                    })
+                        except Exception as e_v:
+                            st.warning(f"Nota sobre Ventas: {e_v}")
+    
+                        # B. Consultar COMPRAS (Nombres exactos: DETALLE_COMPRAS y COMPRAS_CABECERA)
+                        try:
+                            id_prod_query = int(id_kardex) if str(id_kardex).isdigit() else str(id_kardex)
+                            
+                            # 1. Obtener detalles del producto
+                            res_c = db.table("DETALLE_COMPRAS").select("*").eq("ID_Producto", id_prod_query).execute().data
+                            
+                            if res_c:
+                                # Obtener IDs de compras únicos
+                                ids_compras = list(set([c.get("ID_Compra") for c in res_c if c.get("ID_Compra") is not None]))
+                                
+                                # 2. Obtener fechas de COMPRAS_CABECERA
+                                cabeceras_dict = {}
+                                if ids_compras:
+                                    res_cab = db.table("COMPRAS_CABECERA").select("ID_Compra, Fecha").in_("ID_Compra", ids_compras).execute().data
+                                    cabeceras_dict = {cab["ID_Compra"]: cab for cab in res_cab if "ID_Compra" in cab}
+                    
+                                # 3. Unir movimientos
+                                for c in res_c:
+                                    id_compra = c.get("ID_Compra")
+                                    cabecera = cabeceras_dict.get(id_compra, {})
+                                    f_c = cabecera.get("Fecha") or c.get("Fecha")
+                                    f_c_date = str(f_c)[:10] if f_c else ""
+                                    
+                                    # Filtrar por rango de fechas seleccionado
+                                    if f_c and str_f_desde <= f_c_date <= str_f_hasta:
+                                        cant = int(c.get("Cantidad", 0))
+                                        movimientos.append({
+                                            "Fecha_raw": f_c,
+                                            "Concepto": "🚚 COMPRA",
+                                            "ID Referencia": f"ID_Compra: {id_compra if id_compra else 'S/I'}",
+                                            "Variación": +cant,
+                                            "Detalle / Observaciones": f"Ingreso por compra al proveedor"
+                                        })
+                        except Exception as e_c:
+                            st.error(f"Error al consultar Compras: {e_c}")
+    
+                        # C. Consultar CAMBIOS / DEVOLUCIONES / DIVISOR
+                        try:
+                            res_cam = db.table("CAMBIOS").select("*").eq("Código", id_kardex)\
+                                .gte("Fecha", str_f_desde).lte("Fecha", str_f_hasta).execute().data
+                            
+                            for cam in res_cam:
+                                entra = int(cam.get("Entra", 0))
+                                sale = int(cam.get("Sale", 0))
+                                var = entra - sale
+                                movimientos.append({
+                                    "Fecha_raw": cam.get("Fecha"),
+                                    "Concepto": "🔄 CAMBIO / AJUSTE",
+                                    "ID Referencia": f"ID_Cambio: {cam.get('id', 'S/I')}",
+                                    "Variación": var,
+                                    "Detalle / Observaciones": f"{cam.get('Descripción', '')} (Usuario: {cam.get('Usuario', 'S/D')})"
+                                })
+                        except Exception as e_cam:
+                            pass
+    
+                        # D. Consultar LOGS DE AUDITORÍA
+                        try:
+                            res_aud = db.table("LOGS_AUDITORIA").select("*").eq("id_entidad", str(id_kardex))\
+                                .gte("fecha_hora", str_f_desde).lte("fecha_hora", str_f_hasta).execute().data
+                            
+                            for aud in res_aud:
+                                movimientos.append({
+                                    "Fecha_raw": aud.get("fecha_hora"),
+                                    "Concepto": "🛠️ AUDITORÍA MANUAL",
+                                    "ID Referencia": f"ID_Log: {aud.get('id', 'S/I')}",
+                                    "Variación": 0,
+                                    "Detalle / Observaciones": f"Acción: {aud.get('accion')} | User: {aud.get('usuario')}"
+                                })
+                        except Exception as e_aud:
+                            pass
+    
+                        # Renderizar resultados con trazabilidad de stock
+                        if movimientos:
+                            df_kardex = pd.DataFrame(movimientos)
+                            
+                            # Conversión segura de fechas heterogéneas
+                            df_kardex["Fecha_datetime"] = pd.to_datetime(
+                                df_kardex["Fecha_raw"], 
+                                format='mixed', 
+                                utc=True, 
+                                errors='coerce'
+                            )
+                            
+                            # Eliminar registros con fechas inválidas si los hubiera y ordenar desc
+                            df_kardex = df_kardex.dropna(subset=["Fecha_datetime"])
+                            df_kardex = df_kardex.sort_values(by="Fecha_datetime", ascending=False).reset_index(drop=True)
+                            
+                            # Reconstrucción trazable de Stock Anterior y Nuevo Stock hacia atrás
+                            stock_cursor = stock_actual
+                            stock_anterior_list = []
+                            nuevo_stock_list = []
+                            
+                            for _, row in df_kardex.iterrows():
+                                var = row["Variación"]
+                                nuevo_stk = stock_cursor
+                                stk_ant = nuevo_stk - var
+                                
+                                nuevo_stock_list.append(nuevo_stk)
+                                stock_anterior_list.append(stk_ant)
+                                
+                                stock_cursor = stk_ant
+                            
+                            df_kardex["Stock Anterior"] = stock_anterior_list
+                            df_kardex["Nuevo Stock"] = nuevo_stock_list
+                            df_kardex["Fecha"] = df_kardex["Fecha_datetime"].dt.strftime("%d/%m/%Y %H:%M")
+                            
+                            # Reordenar columnas para la vista final
+                            columnas_ordenadas = [
+                                "Fecha", "Concepto", "ID Referencia", 
+                                "Stock Anterior", "Variación", "Nuevo Stock", 
+                                "Detalle / Observaciones"
+                            ]
+                            df_kardex = df_kardex[columnas_ordenadas]
+                            
+                            # Métricas resumidas
+                            col_m1, col_m2 = st.columns(2)
+                            total_entradas = df_kardex[df_kardex["Variación"] > 0]["Variación"].sum()
+                            total_salidas = abs(df_kardex[df_kardex["Variación"] < 0]["Variación"].sum())
+                            
+                            col_m1.metric("📥 Total Ingresos/Entradas", f"+{total_entradas} un.")
+                            col_m2.metric("📤 Total Salidas/Egresos", f"-{total_salidas} un.")
+                            
+                            st.dataframe(df_kardex, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("No se encontraron movimientos registrados para este producto en el rango de fechas seleccionado.")
     
     # =====================================================================
     # MODULO: 📦 STOCK
