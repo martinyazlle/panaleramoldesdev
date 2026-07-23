@@ -1998,33 +1998,51 @@ else:
         # --- PESTAÑA BUSCAR ---
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
-            
+    
+            # Control visual extra solo para administradores
+            mostrar_inactivos = False
+            if st.session_state.rol == "Administrador":
+                mostrar_inactivos = st.checkbox("👁️ Mostrar productos INACTIVOS", value=False, key="chk_inactivos")
+    
             busqueda_texto = st.text_input(
                 "Escriba para filtrar por nombre o código:", 
                 placeholder="Ej: pampers, 779...",
                 key="busqueda_tab_buscar"
             )
-            
+    
             c1, c2 = st.columns(2)
             rubros = ["Todos"] + [r for r in st.session_state.df_prod['Rubro'].dropna().unique().tolist() if r]
             marcas = ["Todos"] + [m for m in st.session_state.df_prod['Marca'].dropna().unique().tolist() if m]
-            
+    
             filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_tab")
             filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_tab")
-            
+    
             df_filtrado = st.session_state.df_prod.copy()
-            
+    
+            # -------------------------------------------------------------
+            # 🛡️ FILTRO DE ESTADO INACTIVO
+            # Si la columna 'Estado' existe en la tabla:
+            # - Vendedores: NUNCA ven INACTIVO.
+            # - Admin: Solo lo ven si marcaron el checkbox "mostrar_inactivos".
+            # -------------------------------------------------------------
+            if 'Estado' in df_filtrado.columns:
+                if not mostrar_inactivos:
+                    # Ocultamos los INACTIVOS (dejando los ACTIVO o vacíos/sin definir)
+                    df_filtrado = df_filtrado[df_filtrado['Estado'] != 'INACTIVO']
+    
+            # Filtros de texto, rubro y marca
             if busqueda_texto:
                 busqueda_texto = busqueda_texto.lower()
                 mask = df_filtrado['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
                        df_filtrado['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
                 df_filtrado = df_filtrado[mask]
-            
+    
             if filtro_rubro != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Rubro'] == filtro_rubro]
             if filtro_marca != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Marca'] == filtro_marca]
     
+            # Ajuste de columnas visibles según el rol
             if st.session_state.rol != "Administrador":
                 cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
                 df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
