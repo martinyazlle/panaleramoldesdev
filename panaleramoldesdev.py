@@ -785,6 +785,51 @@ else:
         except Exception as e:
             # Forzamos a que Streamlit nos muestre el error real en pantalla si llega a fallar
             st.error(f"🚨 Error crítico al guardar en auditoría: {e}")
+
+    def actualizar_estados_productos(db):
+        """
+        Regla:
+        - INACTIVO: Si Stock_Min es NULL / None / 0 Y Stock_Actual es 0.
+        - ACTIVO: Cualquier otro caso (incluye productos 'clavo' con stock > 0).
+        """
+        try:
+            # Traemos todos los productos con los nombres reales de tus columnas
+            prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Stock_Min, Estado").execute().data
+            
+            prods_a_inactivar = []
+            prods_a_activar = []
+            
+            for p in prods:
+                cod = p.get("ID_Producto")
+                stock = int(p.get("Stock_Actual") or 0)
+                stock_min = p.get("Stock_Min")
+                estado_actual = p.get("Estado", "ACTIVO")
+                
+                # Verificamos si Stock_Min es nulo o 0
+                sin_stock_min = (stock_min is None or str(stock_min).strip() in ["", "0", "None"])
+                
+                if sin_stock_min and stock == 0:
+                    if estado_actual != "INACTIVO":
+                        prods_a_inactivar.append(cod)
+                else:
+                    if estado_actual != "ACTIVO":
+                        prods_a_activar.append(cod)
+                        
+            # Actualizaciones en la base de datos
+            for cod in prods_a_inactivar:
+                db.table("PRODUCTOS").update({"Estado": "INACTIVO"}).eq("ID_Producto", cod).execute()
+                
+            for cod in prods_a_activar:
+                db.table("PRODUCTOS").update({"Estado": "ACTIVO"}).eq("ID_Producto", cod).execute()
+                
+            st.success(f"✅ Estados actualizados: {len(prods_a_inactivar)} inhabilitados, {len(prods_a_activar)} reactivados.")
+            
+            # Limpiamos caché de sesión para refrescar las listas
+            if 'df_prod' in st.session_state:
+                del st.session_state['df_prod']
+                
+        except Exception as e:
+            st.error(f"Error al actualizar estados: {e}")
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -2264,6 +2309,14 @@ else:
             # --- PESTAÑA MODIFICAR ---
             with tab_modificar:
                 st.subheader("✏️ Modificar Producto Completo")
+
+                # --- BOTÓN DE MANTENIMIENTO DE ESTADOS ---
+                with st.expander("⚙️ Herramientas de Mantenimiento"):
+                    st.caption("Inactiva productos sin stock y con Stock Mínimo en 0/NULL. Reactiva los que recuperen stock.")
+                    if st.button("⚡ Actualizar Estados de Productos", use_container_width=True):
+                        with st.spinner("Procesando estados en Supabase..."):
+                            actualizar_estados_productos(db)
+                            st.rerun()
                 
                 if not st.session_state.df_prod.empty:
                     opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
