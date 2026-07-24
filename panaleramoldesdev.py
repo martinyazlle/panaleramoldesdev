@@ -2016,13 +2016,13 @@ else:
         
         st.session_state.df_prod = df_prod.copy()
     
-        # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL
+        # 2. DEFINICIÓN DINÁMICA DE PESTAÑAS SEGÚN ROL (Se agrega "📋 Inventario")
         if st.session_state.rol == "Administrador":
-            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "📥 Importar", "✂️ Divisor", "📜 Histórico"])
-            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_importar, tab_divisor, tab_historico = tabs
+            tabs = st.tabs(["🔍 Buscar", "➕ Alta", "✏️ Modificar", "🔄 Cambios", "✂️ Divisor", "📋 Inventario", "📥 Importar", "📜 Histórico"])
+            tab_buscar, tab_alta, tab_modificar, tab_cambios, tab_divisor, tab_inventario, tab_importar, tab_historico = tabs
         else:
-            tabs = st.tabs(["🔍 Buscar", "🔄 Cambios", "✂️ Divisor"])
-            tab_buscar, tab_cambios, tab_divisor = tabs
+            tabs = st.tabs(["🔍 Buscar", "🔄 Cambios", "✂️ Divisor", "📋 Inventario"])
+            tab_buscar, tab_cambios, tab_divisor, tab_inventario = tabs
             tab_alta, tab_modificar, tab_importar, tab_historico = None, None, None, None
     
         # --- PESTAÑA BUSCAR ---
@@ -2305,6 +2305,333 @@ else:
                                 
                             except Exception as e:
                                 st.error(f"Error al procesar la división: {e}")
+
+        # --- PESTAÑA INVENTARIO (NUEVA) ---
+        with tab_inventario:
+            st.subheader("📋 Módulo de Toma de Inventarios")
+
+            # Definir vistas disponibles según el Rol
+            if st.session_state.rol == "Administrador":
+                subtab_vendedor, subtab_admin = st.tabs(["📝 Realizar Recuento (Vendedor)", "📊 Auditoría y Ajustes (Admin)"])
+            else:
+                subtab_vendedor = st.container()
+                subtab_admin = None
+
+            # --- VISTA 1: VENDEDOR ---
+            with subtab_vendedor if st.session_state.rol == "Administrador" else st.container():
+                st.caption("Efectúe el recuento físico de la mercadería.")
+                
+                # Excluir productos inactivos
+                df_activos = st.session_state.df_prod.copy()
+                if 'Estado' in df_activos.columns:
+                    df_activos = df_activos[df_activos['Estado'] != 'INACTIVO']
+                
+                modo_conteo = st.radio(
+                    "Seleccionar método de recuento:", 
+                    ["Por Marca", "Muestreo al Azar"], 
+                    horizontal=True, 
+                    key="inv_modo"
+                )
+                
+                productos_a_contar = pd.DataFrame()
+                parametro_conteo = ""
+                
+                # -------------------------------------------------------------
+                # MANEJO DE RESETEO LIMPIO DE WIDGETS
+                # -------------------------------------------------------------
+                if st.session_state.get("reset_inventario", False):
+                    st.session_state["inv_marca_sel"] = None
+                    st.session_state["reset_inventario"] = False
+
+                # -------------------------------------------------------------
+                # 1. OPCIÓN POR MARCA
+                # -------------------------------------------------------------
+                if modo_conteo == "Por Marca":
+                    marcas_disp = sorted(df_activos['Marca'].dropna().unique().tolist()) if 'Marca' in df_activos.columns else []
+                    
+                    marca_sel = st.selectbox(
+                        "Seleccionar Marca a auditar:", 
+                        options=marcas_disp, 
+                        index=None, 
+                        placeholder="--- Seleccione una Marca ---",
+                        key="inv_marca_sel"
+                    )
+                    
+                    if marca_sel:
+                        parametro_conteo = marca_sel
+                        productos_a_contar = df_activos[df_activos['Marca'] == marca_sel].copy()
+
+                # -------------------------------------------------------------
+                # 2. OPCIÓN MUESTREO AL AZAR
+                # -------------------------------------------------------------
+                else:
+                    cant_items = st.number_input(
+                        "Cantidad de artículos al azar:", 
+                        min_value=1, 
+                        max_value=max(1, len(df_activos)), 
+                        value=min(10, max(1, len(df_activos))), 
+                        step=5
+                    )
+                    parametro_conteo = f"{cant_items} Artículos al azar"
+                    
+                    if st.button("🎲 Generar Muestra Aleatoria", key="btn_generar_azar"):
+                        st.session_state.muestra_azar = df_activos.sample(n=int(cant_items)).copy()
+                        
+                    if "muestra_azar" in st.session_state:
+                        productos_a_contar = st.session_state.muestra_azar
+
+                # -------------------------------------------------------------
+                # 3. FORMULARIO DE RECUENTO
+                # -------------------------------------------------------------
+                if not productos_a_contar.empty:
+                    st.info(f"Mostrando **{len(productos_a_contar)}** productos para la recolección física.")
+                    
+                    with st.form("form_recuento_inv"):
+                        vendedor_nombre = st.text_input(
+                            "Nombre del Vendedor / Auditor:", 
+                            value=st.session_state.get("usuario_actual", "")
+                        )
+                        conteos_usuario = {}
+                        
+                        st.markdown("---")
+                        for idx, prod in productos_a_contar.iterrows():
+                            col_info, col_input = st.columns([3, 1])
+                            with col_info:
+                                st.write(f"**{prod['Nombre']}**")
+                                st.caption(f"Código: `{prod['ID_Producto']}` | Rubro: {prod.get('Rubro', 'N/A')}")
+                            with col_input:
+                                conteos_usuario[str(prod['ID_Producto'])] = st.number_input(
+                                    "Contado", 
+                                    min_value=0, 
+                                    value=0, 
+                                    key=f"inv_in_{prod['ID_Producto']}"
+                                )
+                            st.markdown("---")
+                            
+                        if st.form_submit_button("📩 Finalizar y Enviar Recuento", type="primary"):
+                            if not vendedor_nombre:
+                                st.error("Por favor ingrese el nombre antes de enviar.")
+                            else:
+                                try:
+                                    # 1. Consultar Stock_Actual y Precio_Costo en tiempo real
+                                    ids_prod = list(conteos_usuario.keys())
+                                    res_prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Precio_Costo").in_("ID_Producto", ids_prod).execute().data
+                                    df_live = pd.DataFrame(res_prods)
+                                    
+                                    # Mapeos rápidos para cálculo
+                                    stock_map = dict(zip(df_live['ID_Producto'].astype(str), df_live['Stock_Actual']))
+                                    costo_map = dict(zip(df_live['ID_Producto'].astype(str), df_live['Precio_Costo']))
+
+                                    # 2. Calcular Impacto Financiero Total Estimado
+                                    impacto_financiero_total = 0.0
+                                    detalles_insertar_temp = []
+
+                                    for prod_id, cont_cant in conteos_usuario.items():
+                                        stock_snap = float(stock_map.get(str(prod_id), 0) or 0)
+                                        costo_unitario = float(costo_map.get(str(prod_id), 0) or 0)
+                                        
+                                        dif = float(cont_cant) - stock_snap
+                                        impacto_item = dif * costo_unitario
+                                        impacto_financiero_total += impacto_item
+
+                                        detalles_insertar_temp.append({
+                                            "id_producto": str(prod_id),
+                                            "stock_sistema_snap": stock_snap,
+                                            "stock_contado": float(cont_cant),
+                                            "diferencia": dif,
+                                            "estado_item": "PENDIENTE"
+                                        })
+
+                                    # 3. Insertar Cabecera (INCLUYENDO impactofinanciero)
+                                    res_cabecera = db.table("INVENTARIOS_CABECERA").insert({
+                                        "tipo": "MARCA" if modo_conteo == "Por Marca" else "AZAR",
+                                        "parametro": parametro_conteo,
+                                        "vendedor": vendedor_nombre,
+                                        "estado": "ENVIADO",
+                                        "impactofinanciero": round(impacto_financiero_total, 2)
+                                    }).execute()
+                                    
+                                    id_inv = res_cabecera.data[0]['id']
+
+                                    # 4. Asignar inventario_id a los detalles e Insertar
+                                    for det in detalles_insertar_temp:
+                                        det["inventario_id"] = id_inv
+
+                                    db.table("INVENTARIOS_DETALLE").insert(detalles_insertar_temp).execute()
+
+                                    # -------------------------------------------------------------
+                                    # 🧹 RESETEO POST-ENVÍO
+                                    # -------------------------------------------------------------
+                                    for prod_id in conteos_usuario.keys():
+                                        key_input = f"inv_in_{prod_id}"
+                                        if key_input in st.session_state:
+                                            del st.session_state[key_input]
+
+                                    if "muestra_azar" in st.session_state:
+                                        del st.session_state["muestra_azar"]
+
+                                    st.session_state["reset_inventario"] = True
+
+                                    st.success(f"✅ Recuento enviado. Impacto estimado: ${impacto_financiero_total:,.2f}")
+                                    st.rerun()
+
+                                except Exception as e:
+                                    st.error(f"Error al enviar recuento: {e}")
+
+            # --- VISTA 2: ADMIN AUDITORÍA ---
+            if st.session_state.rol == "Administrador" and subtab_admin:
+                with subtab_admin:
+                    st.caption("Supervisión, detección de inconsistencias y aplicación de diferencias.")
+                    
+                    cabeceras_data = db.table("INVENTARIOS_CABECERA").select("*").eq("estado", "ENVIADO").order("created_at", desc=True).execute().data
+                    
+                    if not cabeceras_data:
+                        st.info("No existen recuentos pendientes de revisión.")
+                    else:
+                        df_cabeceras = pd.DataFrame(cabeceras_data)
+                        
+                        # Formato de opción agregando el impacto financiero guardado en BD
+                        opciones_inv = [
+                            f"ID #{r['id']} - {r['vendedor']} ({r['parametro']}) - Impacto Est.: ${float(r.get('impactofinanciero') or 0):,.2f} - {str(r['created_at'])[:10]}" 
+                            for _, r in df_cabeceras.iterrows()
+                        ]
+                        inv_seleccionado = st.selectbox("Seleccione recuento para auditar:", opciones_inv, key="rev_inv_sel")
+                        
+                        if inv_seleccionado:
+                            id_cabecera = int(inv_seleccionado.split(" - ")[0].replace("ID #", ""))
+                            detalle_data = db.table("INVENTARIOS_DETALLE").select("*").eq("inventario_id", id_cabecera).execute().data
+                            
+                            if detalle_data:
+                                df_det = pd.DataFrame(detalle_data)
+                                ids_det = df_det['id_producto'].tolist()
+                                
+                                df_prods_info = pd.DataFrame(
+                                    db.table("PRODUCTOS")
+                                    .select("ID_Producto, Nombre, Precio_Costo, Stock_Actual")
+                                    .in_("ID_Producto", ids_det)
+                                    .execute().data
+                                )
+                                
+                                df_prods_info['ID_Producto'] = df_prods_info['ID_Producto'].astype(str)
+                                df_det['id_producto'] = df_det['id_producto'].astype(str)
+                                
+                                df_merged = pd.merge(df_det, df_prods_info, left_on="id_producto", right_on="ID_Producto", suffixes=('', '_actual'))
+                                
+                                total_dif = df_merged['diferencia'].sum()
+                                impacto_dinero = (df_merged['diferencia'] * df_merged['Precio_Costo'].fillna(0)).sum()
+                                
+                                m1, m2 = st.columns(2)
+                                m1.metric("Diferencia Total (Unidades)", f"{total_dif:.0f}")
+                                m2.metric("Impacto Financiero Estimado", f"${impacto_dinero:,.2f}", delta_color="inverse")
+                                
+                                st.markdown("---")
+                                
+                                for idx, item in df_merged.iterrows():
+                                    dif = item['diferencia']
+                                    if dif == 0:
+                                        color_status = "🟢 COINCIDE"
+                                        border = False
+                                    elif dif < 0:
+                                        color_status = f"🔴 FALTANTE ({dif:.0f})"
+                                        border = True
+                                    else:
+                                        color_status = f"🟡 SOBRANTE (+{dif:.0f})"
+                                        border = True
+                                        
+                                    with st.container(border=border):
+                                        c1, c2, c3, c4, c5 = st.columns([3, 1.5, 1.5, 2, 2])
+                                        c1.write(f"**{item['Nombre']}** (`{item['id_producto']}`)")
+                                        c2.write(f"Snap: **{item['stock_sistema_snap']}**")
+                                        c3.write(f"Contado: **{item['stock_contado']}**")
+                                        c4.write(f"Estado: **{color_status}**")
+                                        
+                                        with c5:
+                                            if item['estado_item'] == 'PENDIENTE' and dif != 0:
+                                                if st.button("✔️ Aplicar Ajuste", key=f"btn_aj_{item['id']}"):
+                                                    try:
+                                                        # 1. Asegurar tipo text estricto para la clave
+                                                        id_prod_str = str(item['id_producto']).strip()
+                                                        
+                                                        # 2. Consultar el stock actual en tiempo real en la BD
+                                                        p_actual = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_prod_str).execute().data
+                                                        
+                                                        if not p_actual:
+                                                            st.error(f"No se encontró el producto con ID '{id_prod_str}' en la base de datos.")
+                                                            st.stop()
+                                                        
+                                                        # Convertir a float primero por si viene None o vacio, luego operar
+                                                        stock_vivo = float(p_actual[0]['Stock_Actual'] or 0)
+                                                        dif_float = float(item['diferencia'])
+                                                        
+                                                        # 3. CASTEO ESTRICTO A INT4 (int nativo de Python)
+                                                        nuevo_stock_int = int(round(stock_vivo + dif_float))
+                                                        
+                                                        # 4. Actualizar tabla PRODUCTOS
+                                                        db.table("PRODUCTOS").update({
+                                                            "Stock_Actual": nuevo_stock_int
+                                                        }).eq("ID_Producto", id_prod_str).execute()
+                                                        
+                                                        # 5. Actualizar estado en INVENTARIOS_DETALLE
+                                                        id_detalle_int = int(item['id'])
+                                                        db.table("INVENTARIOS_DETALLE").update({
+                                                            "estado_item": "AJUSTADO"
+                                                        }).eq("id", id_detalle_int).execute()
+                                                        
+                                                        # 6. Auditoría
+                                                        if 'log_auditoria' in globals():
+                                                            log_auditoria(
+                                                                tabla="PRODUCTOS",
+                                                                accion="UPDATE",
+                                                                id_entidad=id_prod_str,
+                                                                detalles={
+                                                                    "operacion": "Ajuste de Inventario",
+                                                                    "diferencia_aplicada": dif_float,
+                                                                    "stock_anterior": stock_vivo,
+                                                                    "nuevo_stock": nuevo_stock_int
+                                                                },
+                                                                usuario=st.session_state.get('usuario_actual', 'Admin')
+                                                            )
+                                                        
+                                                        st.success(f"✅ ¡Ajustado! {int(stock_vivo)} ➔ {nuevo_stock_int}")
+                                                        st.rerun()
+                                                        
+                                                    except Exception as e:
+                                                        st.error(f"Error al aplicar ajuste: {e}")
+                                            elif item['estado_item'] == 'AJUSTADO':
+                                                st.caption("✅ Ajustado")
+                                            else:
+                                                st.caption("Sin diferencia")
+            
+                                st.markdown("---")
+                                
+                                # -------------------------------------------------------------
+                                # BOTONES INFERIORES: ARCHIVAR O ELIMINAR
+                                # -------------------------------------------------------------
+                                col_accion1, col_accion2 = st.columns(2)
+            
+                                with col_accion1:
+                                    if st.button("🏁 Finalizar y Archivar Auditoría", type="primary", use_container_width=True, key="btn_cerrar_inv"):
+                                        db.table("INVENTARIOS_CABECERA").update({"estado": "REVISADO"}).eq("id", id_cabecera).execute()
+                                        st.success("✅ Inventario cerrado correctamente.")
+                                        st.rerun()
+            
+                                with col_accion2:
+                                    with st.popover("🗑️ Eliminar Auditoría", use_container_width=True):
+                                        st.warning("⚠️ **¿Está seguro de eliminar este recuento?**")
+                                        st.caption("Esta acción borrará permanentemente la cabecera y sus detalles.")
+                                        
+                                        if st.button("💥 Confirmar y Borrar", type="primary", use_container_width=True, key="btn_del_inv_confirm"):
+                                            try:
+                                                # 1. Borrar detalle
+                                                db.table("INVENTARIOS_DETALLE").delete().eq("inventario_id", id_cabecera).execute()
+                                                
+                                                # 2. Borrar cabecera
+                                                db.table("INVENTARIOS_CABECERA").delete().eq("id", id_cabecera).execute()
+                                                
+                                                st.success("🗑️ Recuento eliminado exitosamente.")
+                                                st.rerun()
+                                            except Exception as e:
+                                                st.error(f"Error al eliminar la auditoría: {e}")
     
         # --- PESTAÑAS DE ADMINISTRADOR ---
         if st.session_state.rol == "Administrador":
