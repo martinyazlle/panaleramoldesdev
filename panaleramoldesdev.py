@@ -346,39 +346,69 @@ else:
                 db.table("FORMAS_PAGO").update({"Activo": False}).eq("ID_Pago", p['ID_Pago']).execute()
                 st.rerun()
 
-    def calcular_y_actualizar_stock_automatico():
-        # 1. Definir rango de fechas
-        hace_60_dias = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
-
-        # 2. Traer ventas de los últimos 60 días (Join básico)
-        # Obtenemos detalle y traemos la fecha desde la cabecera
-        ventas = db.table("VENTAS_DETALLE").select("ID_Producto, Cantidad, VENTAS_CABECERA(Fecha)").gte("VENTAS_CABECERA.Fecha", hace_60_dias).execute().data
-        
-        # 3. Procesar con Pandas
-        df_ventas = pd.DataFrame(ventas)
-        # Aplanamos la estructura de la relación
-        df_ventas['Fecha'] = df_ventas['VENTAS_CABECERA'].apply(lambda x: x[0]['Fecha'] if isinstance(x, list) else None)
-        
-        # Sumar cantidades por producto
-        rotacion = df_ventas.groupby('ID_Producto')['Cantidad'].sum().reset_index()
-        
-        # 4. Calcular y Actualizar
-        for _, fila in rotacion.iterrows():
-            id_prod = fila['ID_Producto']
-            total_vendido = fila['Cantidad']
+    def calcular_y_actualizar_stock_automatico(ids_filtrados=None):
+        """
+        Recalcula Stock_Min y Stock_Max basado en las ventas de los últimos 60 días.
+        Si recibe 'ids_filtrados', solo afecta a esa lista de productos.
+        """
+        try:
+            # 1. Definir rango de fechas (60 días atrás)
+            hace_60_dias = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+    
+            # 2. Traer ventas de los últimos 60 días
+            ventas = db.table("VENTAS_DETALLE").select("ID_Producto, Cantidad, VENTAS_CABECERA(Fecha)").gte("VENTAS_CABECERA.Fecha", hace_60_dias).execute().data
             
-            # Fórmulas
-            promedio_diario = total_vendido / 60
-            stock_min = max(1, int(promedio_diario * 7))  # Mínimo 1 para evitar errores
-            stock_max = int(promedio_diario * 30)
-            
-            # Actualizar en Supabase
-            db.table("PRODUCTOS").update({
-                "Stock_Min": stock_min,
-                "Stock_Max": stock_max
-            }).eq("ID_Producto", id_prod).execute()
-            
-        return True
+            # 3. Si se pasaron IDs filtrados, filtramos la lista de productos a procesar
+            if ids_filtrados is not None:
+                # Nos aseguramos de tenerlos como texto/string para comparar bien
+                lista_ids_target = [str(i) for i in ids_filtrados]
+            else:
+                # Si no hay filtro, traemos TODOS los productos activos/existentes de la base
+                prods_base = db.table("PRODUCTOS").select("ID_Producto").execute().data
+                lista_ids_target = [str(p['ID_Producto']) for p in prods_base]
+    
+            if not lista_ids_target:
+                st.warning("No hay productos seleccionados para recalcular.")
+                return False
+    
+            # 4. Mapear ventas por producto
+            dict_ventas = {str(id_p): 0.0 for id_p in lista_ids_target}
+    
+            if ventas:
+                df_ventas = pd.DataFrame(ventas)
+                df_ventas['ID_Producto'] = df_ventas['ID_Producto'].astype(str)
+                
+                # Filtramos ventas solo de los productos objetivo
+                df_ventas = df_ventas[df_ventas['ID_Producto'].isin(lista_ids_target)]
+    
+                if not df_ventas.empty:
+                    rotacion = df_ventas.groupby('ID_Producto')['Cantidad'].sum().to_dict()
+                    for id_p, cant in rotacion.items():
+                        dict_ventas[id_p] = float(cant)
+    
+            # 5. Calcular y Actualizar en Supabase
+            for id_prod, total_vendido in dict_ventas.items():
+                promedio_diario = total_vendido / 60
+                
+                if total_vendido > 0:
+                    stock_min = max(1, int(promedio_diario * 7))   # Mínimo para 7 días
+                    stock_max = max(1, int(promedio_diario * 30))  # Máximo para 30 días
+                else:
+                    # Si no tuvo ventas en 60 días
+                    stock_min = 1
+                    stock_max = 0
+    
+                # Actualizar en Supabase
+                db.table("PRODUCTOS").update({
+                    "Stock_Min": stock_min,
+                    "Stock_Max": stock_max
+                }).eq("ID_Producto", id_prod).execute()
+    
+            return True
+    
+        except Exception as e:
+            st.error(f"Error al recalcular stock automático: {e}")
+            return False
 
     def resetear_punto_venta():
         # Lista de claves que queremos limpiar
@@ -2669,33 +2699,38 @@ else:
         df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
         df_prov = pd.DataFrame(db.table("PROVEEDORES").select("*").execute().data)
         
-        # --- BUSCADOR FLEXIBLE ---
+        # --- BUSCADOR Y CONTROLES FLEXIBLES ---
         st.subheader("🔍 Buscar Artículos")
+        
+        # Checkbox opcional para incluir inactivos (por defecto ocultos)
+        mostrar_inactivos = st.checkbox("👁️ Mostrar productos INACTIVOS", value=False, key="chk_inactivos_stock")
         
         # Usamos text_input para escritura libre
         busqueda_texto = st.text_input(
             "Escriba para filtrar por nombre o código:", 
-            placeholder="Ej: babydry, pampers, 779..."
+            placeholder="Ej: babydry, pampers, 779...",
+            key="busqueda_stock"
         )
         
         # --- FILTROS ---
         c1, c2, c3 = st.columns(3)
-        rubros = ["Todos"] + df_prod['Rubro'].unique().tolist()
-        marcas = ["Todos"] + df_prod['Marca'].unique().tolist()
+        rubros = ["Todos"] + [r for r in df_prod['Rubro'].dropna().unique().tolist() if r]
+        marcas = ["Todos"] + [m for m in df_prod['Marca'].dropna().unique().tolist() if m]
+        provs = ["Todos"] + [p for p in df_prov['Razon_Social'].dropna().unique().tolist() if p]
         
-        # Creamos un diccionario {ID_Proveedor: Razon_Social} para cruzar datos si tu tabla PRODUCTOS guarda el ID
-        # Nota: Ajusta si tu tabla PRODUCTOS guarda directamente el nombre o el ID.
-        provs = ["Todos"] + df_prov['Razon_Social'].tolist()
-        
-        filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros)
-        filtro_marca = c2.selectbox("Filtrar por Marca", marcas)
-        filtro_prov = c3.selectbox("Filtrar por Proveedor", provs)
+        filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_stock")
+        filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_stock")
+        filtro_prov = c3.selectbox("Filtrar por Proveedor", provs, key="filtro_prov_stock")
         
         # Inicializamos la copia para aplicar filtros consecutivos
         df_f = df_prod.copy()
         
         # --- FILTRADO ACUMULATIVO (CONSECUTIVO) ---
         
+        # Filtro 0: Productos Inactivos
+        if 'Estado' in df_f.columns and not mostrar_inactivos:
+            df_f = df_f[df_f['Estado'] != 'INACTIVO']
+
         # Filtro 1: Búsqueda por texto (si hay algo escrito)
         if busqueda_texto:
             busqueda_texto = busqueda_texto.lower()
@@ -2711,24 +2746,28 @@ else:
         if filtro_marca != "Todos":
             df_f = df_f[df_f['Marca'] == filtro_marca]
             
-        # Filtro 4: Proveedor (Mapeando la Razón Social seleccionada al ID o columna correspondiente)
+        # Filtro 4: Proveedor
         if filtro_prov != "Todos":
-            # Si tu tabla PRODUCTOS usa directamente el nombre del proveedor en una columna 'Proveedor' o 'Razon_Social':
             if 'Proveedor' in df_f.columns:
                 df_f = df_f[df_f['Proveedor'] == filtro_prov]
             elif 'ID_Proveedor' in df_f.columns:
-                # Buscamos el ID que corresponde a esa Razón Social
                 prov_sel = df_prov[df_prov['Razon_Social'] == filtro_prov]
                 if not prov_sel.empty:
                     id_prov_buscado = prov_sel.iloc[0]['ID_Proveedor']
                     df_f = df_f[df_f['ID_Proveedor'] == id_prov_buscado]
         
         # 2. Cálculos en tiempo real
+        # Aseguramos tipos numéricos por seguridad
+        df_f['Stock_Actual'] = pd.to_numeric(df_f['Stock_Actual'], errors='coerce').fillna(0)
+        df_f['Stock_Min'] = pd.to_numeric(df_f['Stock_Min'], errors='coerce').fillna(0)
+        df_f['Stock_Max'] = pd.to_numeric(df_f['Stock_Max'], errors='coerce').fillna(0)
+
         df_f['Faltante_Min'] = (df_f['Stock_Min'] - df_f['Stock_Actual']).clip(lower=0)
         df_f['Faltante_Max'] = (df_f['Stock_Max'] - df_f['Stock_Actual']).clip(lower=0)
         
         # Mostrar tabla
-        st.dataframe(df_f[['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']], width='stretch')
+        cols_mostrar = ['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']
+        st.dataframe(df_f[[c for c in cols_mostrar if c in df_f.columns]], use_container_width=True, hide_index=True)
         
         # 3. Acciones (Exportación)
         col_exp1, col_exp2 = st.columns(2)
@@ -2750,16 +2789,29 @@ else:
         if col_exp2.button("💬 Generar Resumen para WhatsApp"):
             mensaje = "🛒 *Pedido Sugerido (Faltantes a Mínimo):*\n"
             faltantes = df_f[df_f['Faltante_Min'] > 0]
-            for _, item in faltantes.iterrows():
-                mensaje += f"- {item['Nombre']}: Faltan {item['Faltante_Min']}\n"
+            if faltantes.empty:
+                mensaje += " No hay productos con faltantes según el stock mínimo actual."
+            else:
+                for _, item in faltantes.iterrows():
+                    mensaje += f"- {item['Nombre']}: Faltan {int(item['Faltante_Min'])}\n"
             
-            st.text_area("Copia este mensaje para WhatsApp:", value=mensaje)
+            st.text_area("Copia este mensaje para WhatsApp:", value=mensaje, height=200)
 
         # 4. Botón de Mantenimiento
+        st.divider()
         if st.button("🔄 RECALCULAR STOCK MÍNIMO/MÁXIMO"):
-            with st.spinner("Calculando rotación de 60 días..."):
-                if calcular_y_actualizar_stock_automatico():
-                    st.success("¡Stock mínimo y máximo actualizado!")
+            # Extraemos la lista de IDs que están visibles según los filtros aplicados
+            ids_a_recalcular = df_f['ID_Producto'].astype(str).tolist() if not df_f.empty else []
+            
+            cant_prods = len(ids_a_recalcular)
+            with st.spinner(f"Calculando rotación de 60 días para {cant_prods} producto(s)..."):
+                if calcular_y_actualizar_stock_automatico(ids_filtrados=ids_a_recalcular):
+                    st.success(f"¡Stock mínimo y máximo actualizado para {cant_prods} productos!")
+                    
+                    # Limpiamos caché si usas session_state para refrescar los datos
+                    if 'df_prod' in st.session_state:
+                        del st.session_state['df_prod']
+                        
                     st.rerun()
 
     # =====================================================================
