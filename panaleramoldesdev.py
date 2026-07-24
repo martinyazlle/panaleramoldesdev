@@ -3065,6 +3065,55 @@ else:
                 st.rerun()
             st.stop() # Detiene el renderizado del registro mientras se ve el gabinete
 
+        # --- FUNCIÓN ADICIONAL: Agregar al carrito de compras ---
+        def _agregar_al_carrito(pm):
+            st.session_state.carrito_compra.append({
+                "id": str(pm['ID_Producto']), 
+                "nombre": pm['Nombre'], 
+                "cantidad": 1, 
+                "costo": float(pm['Precio_Costo'] or 0), 
+                "subtotal": float(pm['Precio_Costo'] or 0),
+                "Precio_1": float(pm['Precio_1'] or 0),
+                "Precio_2": float(pm['Precio_2'] or 0),
+                "Precio_3": float(pm['Precio_3'] or 0),
+                "Precio_4": float(pm['Precio_4'] or 0),
+                "Precio_5": float(pm['Precio_5'] or 0)
+            })
+        
+        # --- POP-UP / DIÁLOGO DE CONFIRMACIÓN PARA PRODUCTOS INACTIVOS ---
+        @st.dialog("⚠️ Producto Inactivo")
+        def confirmar_activacion_producto(pm):
+            st.warning(
+                f"El producto **{pm['Nombre']}** (Código: `{pm['ID_Producto']}`) "
+                "se encuentra marcado como **INACTIVO**."
+            )
+            st.write("¿Deseas cambiar su estado a **ACTIVO** y agregarlo a la compra?")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("SÍ, Activar y Agregar", type="primary", use_container_width=True):
+                    # 1. Actualizar estado en la base de datos (Supabase)
+                    db.table("PRODUCTOS").update({"Estado": "ACTIVO"}).eq("ID_Producto", pm['ID_Producto']).execute()
+                    
+                    # 2. Actualizar DataFrame en memoria local
+                    idx = df_prod[df_prod['ID_Producto'] == pm['ID_Producto']].index
+                    if not idx.empty:
+                        df_prod.loc[idx, 'Estado'] = 'ACTIVO'
+                    
+                    # 3. Agregar al carrito de compras
+                    _agregar_al_carrito(pm)
+                    
+                    # 4. Limpiar estado auxiliar y recargar interfaz
+                    st.session_state.prod_inactivo_pendiente = None
+                    st.rerun()
+                    
+            with col2:
+                if st.button("NO, Cancelar", use_container_width=True):
+                    st.session_state.prod_inactivo_pendiente = None
+                    st.rerun()
+        
+        
         # --- FUNCIÓN DE ESCANEO ---
         def procesar_escaneo():
             barcode = st.session_state.txt_barcode
@@ -3072,34 +3121,32 @@ else:
                 res = df_prod[df_prod['ID_Producto'].astype(str) == barcode]
                 if not res.empty:
                     p = res.iloc[0]
-                    st.session_state.carrito_compra.append({
-                        "id": str(p['ID_Producto']), "nombre": p['Nombre'], 
-                        "cantidad": 1, "costo": float(p['Precio_Costo'] or 0), 
-                        "subtotal": float(p['Precio_Costo'] or 0)
-                    })
+                    # Validar si el estado es INACTIVO (ajusta 'Estado' al nombre exacto de tu columna si difiere)
+                    estado_prod = str(p.get('Estado', 'ACTIVO')).upper()
+                    if estado_prod == 'INACTIVO':
+                        st.session_state.prod_inactivo_pendiente = p
+                    else:
+                        _agregar_al_carrito(p)
             st.session_state.txt_barcode = ""
-
-        # --- 3. SECCIÓN: DATOS DE FACTURA (RESTAURADA CON FECHA Y BOTÓN) ---
+        
+        
+        # --- 3. SECCIÓN: DATOS DE FACTURA ---
         with st.expander("📄 Datos de la Factura Actual", expanded=True):
-            # Verificación de duplicados
             df_hist_check = pd.DataFrame(db.table("COMPRAS_CABECERA").select("Nro_Factura").execute().data)
             facturas_existentes = df_hist_check['Nro_Factura'].tolist() if not df_hist_check.empty else []
-        
+            
             c1, c1_btn, c2, c3 = st.columns([1, 0.2, 1.5, 1])
             
             with c1:
-                # Recuperamos tu lógica de índice original
                 prov_sel = st.selectbox("Proveedor", lista_proveedores, 
                                         index=lista_proveedores.index(st.session_state.get("temp_prov", lista_proveedores[0])) 
                                         if st.session_state.get("temp_prov") in lista_proveedores else 0,
                                         key="prov_main")
-                
-                # REINCORPORAMOS LA FECHA AQUÍ
                 fecha_factura = st.date_input("Fecha de Factura")
             
             with c1_btn:
-                st.write("") # Espaciador para alinear
-                st.write("") # Espaciador
+                st.write("")
+                st.write("")
                 if st.button("➕", help="Agregar nuevo proveedor"):
                     abrir_alta_proveedor_rapida()
             
@@ -3112,104 +3159,79 @@ else:
                     nro_fact_completo = "00000-00000000"
                 else:
                     nro_fact_completo = f"{f_punto.zfill(5)}-{f_nro.zfill(8)}"
-                    
                     if nro_fact_completo != "00000-00000000" and nro_fact_completo in facturas_existentes:
                         st.error(f"⚠️ La factura {nro_fact_completo} ya existe.")
                         nro_fact_completo = "DUPLICADA"
                         
             with c3:
                 pago_compra = st.selectbox("Método de Pago", ["Contado", "Transferencia", "Cuenta Corriente"], key="pago_main")
-
-        # --- SECCIÓN: BUSCADOR UNIFICADO (Estilo Punto de Venta) ---
+        
+        
+        # --- SECCIÓN: BUSCADOR UNIFICADO ---
         st.subheader("🔍 Añadir Productos a la Compra")
-
-        # 1. Definición de la función de selección unificada
+        
         def procesar_seleccion_compra():
-            # Buscamos en el session_state el valor que eligió el usuario
             seleccion = st.session_state.prod_compra_key
             if seleccion:
-                # Extraemos el ID del texto "Nombre - ID"
                 id_seleccionado = seleccion.split(" - ")[-1]
-                
-                # Buscamos el producto en el dataframe
                 pm = df_prod[df_prod['ID_Producto'].astype(str) == id_seleccionado].iloc[0]
                 
-                # Agregamos al carrito
-                st.session_state.carrito_compra.append({
-                    "id": str(pm['ID_Producto']), 
-                    "nombre": pm['Nombre'], 
-                    "cantidad": 1, 
-                    "costo": float(pm['Precio_Costo'] or 0), 
-                    "subtotal": float(pm['Precio_Costo'] or 0),
-                    "Precio_1": float(pm['Precio_1'] or 0),
-                    "Precio_2": float(pm['Precio_2'] or 0),
-                    "Precio_3": float(pm['Precio_3'] or 0),
-                    "Precio_4": float(pm['Precio_4'] or 0),
-                    "Precio_5": float(pm['Precio_5'] or 0)
-                })
-                
-                # IMPORTANTE: Al poner None, el selectbox se limpia automáticamente
+                # Verificar estado del producto
+                estado_prod = str(pm.get('Estado', 'ACTIVO')).upper()
+                if estado_prod == 'INACTIVO':
+                    st.session_state.prod_inactivo_pendiente = pm
+                else:
+                    _agregar_al_carrito(pm)
+                    
                 st.session_state.prod_compra_key = None 
-
-        # 2. Preparamos las opciones de búsqueda (Nombre + ID)
-        # Esto permite que el usuario escriba tanto el nombre como el código en el mismo lugar
+        
+        # 2. Preparamos las opciones de búsqueda
         opciones_busqueda = (df_prod['Nombre'] + " - " + df_prod['ID_Producto'].astype(str)).tolist()
         
-        # 3. Interfaz única (Sin columnas redundantes)
+        # 3. Interfaz única
         st.selectbox(
             "Buscar por nombre o código", 
             options=opciones_busqueda, 
-            index=None, # Esto hace que no aparezca el "-- Seleccionar --" y se vea el placeholder
+            index=None,
             placeholder="Escriba para buscar producto o escanee...",
             key="prod_compra_key",
             on_change=procesar_seleccion_compra
         )
-
+        
+        # --- DISPARADOR DEL POP-UP ---
+        # Si hay un producto inactivo pendiente de confirmación, se abre el diálogo modal
+        if st.session_state.get("prod_inactivo_pendiente") is not None:
+            confirmar_activacion_producto(st.session_state.prod_inactivo_pendiente)
+        
+        
         # --- MOSTRAR CARRITO Y EDICIÓN DE PRECIOS ---
         if st.session_state.carrito_compra:
             st.subheader("🛒 Detalle de Items")
             for i, item in enumerate(st.session_state.carrito_compra):
-                # Obtener rubro
                 p_info = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
                 rubro = p_info.iloc[0]['Rubro'] if not p_info.empty else "OTROS"
                 margenes = MARGENES_RUBROS.get(rubro, [0.3, 0.2, 0.1, 0.05, 0.0])
-
+        
                 with st.container(border=True):
                     c_head, c_btn = st.columns([6, 1])
-                    
-                    # 1. Obtenemos el código desde p_info (la serie del producto en BD)
-                    # Ajusta 'Codigo' al nombre exacto de la columna en tu tabla de PRODUCTOS
-                    # Usamos directamente el ID que ya tenías en el carrito
-                    # .strip() elimina espacios al principio y al final automáticamente
                     nombre_limpio = item['nombre'].strip()
-                    c_head.write(f"**{nombre_limpio}**  `{item['id']}` | Rubro: {rubro}")
+                    c_head.write(f"**{nombre_limpio}** `{item['id']}` | Rubro: {rubro}")
                     
                     if c_btn.button("🗑️ Eliminar", key=f"del_final_{i}"):
                         st.session_state.carrito_compra.pop(i)
                         st.rerun()
-
-                    # --- LÓGICA DE ACTUALIZACIÓN EN VIVO ---
+        
                     cols = st.columns([1, 1, 5])
-                    
-                    # Usamos key para que el valor esté siempre sincronizado en session_state
                     n_cant = cols[0].number_input("Cant", min_value=1, value=int(item['cantidad']), key=f"q_{i}")
                     n_costo = cols[1].number_input("Costo $", value=float(item['costo']), key=f"p_{i}")
                     
-                    # Fila 3: Inputs de 5 precios
                     cols_p = st.columns(5)
                     nuevos_precios = {}
                     
                     for j in range(5):
-                        # 1. Calculamos el sugerido solo para mostrarlo en el label
                         sugerido = n_costo * (1 + margenes[j])
-                        
-                        # 2. LÓGICA DE PERSISTENCIA:
-                        # Si el ítem YA tiene un precio guardado, usamos ese.
-                        # Si es nuevo (no tiene precio guardado), usamos el valor que tenga en la BD (p[f'Precio_{j+1}'])
-                        # Si tampoco hay valor en BD, ahí recién usamos el 'sugerido'.
                         precio_inicial = item.get(f'Precio_{j+1}')
                         if precio_inicial is None:
-                            # Buscamos el precio actual en la base de datos (p_info es la serie del producto)
                             precio_inicial = p_info.iloc[0][f'Precio_{j+1}'] if not p_info.empty else sugerido
                         
                         nuevos_precios[f'Precio_{j+1}'] = cols_p[j].number_input(
@@ -3218,7 +3240,6 @@ else:
                             key=f"p{j+1}_{i}"
                         )
                     
-                    # Actualizar el carrito con los nuevos valores del widget
                     st.session_state.carrito_compra[i].update({
                         'cantidad': n_cant, 
                         'costo': n_costo, 
