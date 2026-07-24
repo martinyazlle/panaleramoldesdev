@@ -1999,14 +1999,20 @@ else:
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
     
-            # Control visual extra solo para administradores
+            # --- CONTROLES Y FILTROS RÁPIDOS ---
+            c_chk1, c_chk2 = st.columns(2)
+    
+            # 1. Filtro de Stock > 0 (Disponible para todos los roles)
+            solo_con_stock = c_chk1.checkbox("📦 Solo productos con Stock > 0", value=False, key="chk_solo_con_stock")
+    
+            # 2. Mostrar Inactivos (Solo disponible para Administradores)
             mostrar_inactivos = False
             if st.session_state.rol == "Administrador":
-                mostrar_inactivos = st.checkbox("👁️ Mostrar productos INACTIVOS", value=False, key="chk_inactivos")
+                mostrar_inactivos = c_chk2.checkbox("👁️ Mostrar productos INACTIVOS", value=False, key="chk_inactivos")
     
             busqueda_texto = st.text_input(
                 "Escriba para filtrar por nombre o código:", 
-                placeholder="Ej: pampers, 779...",
+                placeholder="Ej: pampers, toallitas, 779...",
                 key="busqueda_tab_buscar"
             )
     
@@ -2020,17 +2026,22 @@ else:
             df_filtrado = st.session_state.df_prod.copy()
     
             # -------------------------------------------------------------
-            # 🛡️ FILTRO DE ESTADO INACTIVO
-            # Si la columna 'Estado' existe en la tabla:
-            # - Vendedores: NUNCA ven INACTIVO.
-            # - Admin: Solo lo ven si marcaron el checkbox "mostrar_inactivos".
+            # 1️⃣ FILTRO DE PRODUCTOS INACTIVOS
             # -------------------------------------------------------------
-            if 'Estado' in df_filtrado.columns:
-                if not mostrar_inactivos:
-                    # Ocultamos los INACTIVOS (dejando los ACTIVO o vacíos/sin definir)
-                    df_filtrado = df_filtrado[df_filtrado['Estado'] != 'INACTIVO']
+            if 'Estado' in df_filtrado.columns and not mostrar_inactivos:
+                df_filtrado = df_filtrado[df_filtrado['Estado'] != 'INACTIVO']
     
-            # Filtros de texto, rubro y marca
+            # -------------------------------------------------------------
+            # 2️⃣ FILTRO DE STOCK DISPONIBLE (Stock_Actual > 0)
+            # -------------------------------------------------------------
+            if solo_con_stock and 'Stock_Actual' in df_filtrado.columns:
+                # Aseguramos que interprete el stock como número por seguridad
+                df_filtrado['Stock_Actual'] = pd.to_numeric(df_filtrado['Stock_Actual'], errors='coerce').fillna(0)
+                df_filtrado = df_filtrado[df_filtrado['Stock_Actual'] > 0]
+    
+            # -------------------------------------------------------------
+            # 3️⃣ FILTROS DE BÚSQUEDA POR TEXTO, RUBRO Y MARCA
+            # -------------------------------------------------------------
             if busqueda_texto:
                 busqueda_texto = busqueda_texto.lower()
                 mask = df_filtrado['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
