@@ -2757,7 +2757,6 @@ else:
                     df_f = df_f[df_f['ID_Proveedor'] == id_prov_buscado]
         
         # 2. Cálculos en tiempo real
-        # Aseguramos tipos numéricos por seguridad
         df_f['Stock_Actual'] = pd.to_numeric(df_f['Stock_Actual'], errors='coerce').fillna(0)
         df_f['Stock_Min'] = pd.to_numeric(df_f['Stock_Min'], errors='coerce').fillna(0)
         df_f['Stock_Max'] = pd.to_numeric(df_f['Stock_Max'], errors='coerce').fillna(0)
@@ -2765,18 +2764,42 @@ else:
         df_f['Faltante_Min'] = (df_f['Stock_Min'] - df_f['Stock_Actual']).clip(lower=0)
         df_f['Faltante_Max'] = (df_f['Stock_Max'] - df_f['Stock_Actual']).clip(lower=0)
         
-        # Mostrar tabla
-        cols_mostrar = ['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']
-        st.dataframe(df_f[[c for c in cols_mostrar if c in df_f.columns]], use_container_width=True, hide_index=True)
-        
-        # 3. Acciones (Exportación)
+        # -------------------------------------------------------------
+        # 📲 SELECCIÓN MANUAL DE PRODUCTOS PARA WHATSAPP
+        # -------------------------------------------------------------
+        # Inicializamos la columna 'Pedir' siempre en False (todos destildados)
+        df_f['Pedir'] = False
+
+        # Reordenamos columnas para poner el checkbox al principio
+        cols_mostrar = ['Pedir', 'Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']
+        cols_presentes = [c for c in cols_mostrar if c in df_f.columns]
+
+        st.caption("💡 Tildá únicamente los artículos que querés incluir en el mensaje de WhatsApp.")
+
+        # Mostramos la tabla editable
+        df_editado = st.data_editor(
+            df_f[cols_presentes],
+            column_config={
+                "Pedir": st.column_config.CheckboxColumn(
+                    "📱 Pedir",
+                    help="Marcar para incluir en el mensaje de WhatsApp",
+                    default=False
+                )
+            },
+            disabled=['Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max'], # Bloquea edición de números
+            hide_index=True,
+            use_container_width=True,
+            key="editor_tabla_stock"
+        )
+
+        # 3. Acciones (Exportación y WhatsApp)
         col_exp1, col_exp2 = st.columns(2)
         
-        # Exportar a Excel
+        # Exportar a Excel (Exporta lo filtrado en pantalla)
         import io
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_f.to_excel(writer, index=False)
+            df_f.drop(columns=['Pedir'], errors='ignore').to_excel(writer, index=False)
         
         col_exp1.download_button(
             label="📥 Exportar a Excel", 
@@ -2785,30 +2808,30 @@ else:
             mime="application/vnd.ms-excel"
         )
         
-        # Preparar mensaje WhatsApp
+        # Preparar mensaje WhatsApp filtrando SOLO los marcados manualmente
         if col_exp2.button("💬 Generar Resumen para WhatsApp"):
-            mensaje = "🛒 *Pedido Sugerido (Faltantes a Mínimo):*\n"
-            faltantes = df_f[df_f['Faltante_Min'] > 0]
-            if faltantes.empty:
-                mensaje += " No hay productos con faltantes según el stock mínimo actual."
-            else:
-                for _, item in faltantes.iterrows():
-                    mensaje += f"- {item['Nombre']}: Faltan {int(item['Faltante_Min'])}\n"
+            seleccionados = df_editado[df_editado['Pedir'] == True]
             
-            st.text_area("Copia este mensaje para WhatsApp:", value=mensaje, height=200)
+            if seleccionados.empty:
+                st.warning("⚠️ No has tildado ningún producto en la columna '📱 Pedir'. Seleccioná al menos uno en la tabla.")
+            else:
+                mensaje = "🛒 *Pedido Sugerido (Faltantes a Mínimo):*\n"
+                for _, item in seleccionados.iterrows():
+                    cant_pedir = int(item['Faltante_Min']) if item['Faltante_Min'] > 0 else 1
+                    mensaje += f"- {item['Nombre']}: Faltan {cant_pedir}\n"
+                
+                st.text_area("Copia este mensaje para WhatsApp:", value=mensaje, height=200)
 
         # 4. Botón de Mantenimiento
         st.divider()
         if st.button("🔄 RECALCULAR STOCK MÍNIMO/MÁXIMO"):
-            # Extraemos la lista de IDs que están visibles según los filtros aplicados
-            ids_a_recalcular = df_f['ID_Producto'].astype(str).tolist() if not df_f.empty else []
+            ids_a_recalcular = df_f['ID_Producto'].astype(str).tolist() if 'ID_Producto' in df_f.columns else []
             
             cant_prods = len(ids_a_recalcular)
             with st.spinner(f"Calculando rotación de 60 días para {cant_prods} producto(s)..."):
                 if calcular_y_actualizar_stock_automatico(ids_filtrados=ids_a_recalcular):
                     st.success(f"¡Stock mínimo y máximo actualizado para {cant_prods} productos!")
                     
-                    # Limpiamos caché si usas session_state para refrescar los datos
                     if 'df_prod' in st.session_state:
                         del st.session_state['df_prod']
                         
