@@ -9,6 +9,10 @@ import json
 import pydeck as pdk
 import uuid
 import os
+import numpy as np
+from math import radians, cos, sin, asin, sqrt
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
@@ -482,7 +486,6 @@ else:
             url_final = response.url
             
             # Buscamos patrones de coordenadas en la URL (ej: /@lat,lng)
-            # Esto busca números decimales separados por coma después de un @
             coordenadas = re.findall(r'@(-?\d+\.\d+),(-?\d+\.\d+)', url_final)
             
             if coordenadas:
@@ -490,40 +493,116 @@ else:
         except:
             return None, None
         return None, None
-
-    def calcular_distancia(coord1, coord2):
-        # Fórmula de Haversine para calcular distancia en línea recta entre dos puntos
-        lat1, lon1 = coord1
-        lat2, lon2 = coord2
-        R = 6371  # Radio de la tierra en km
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        return R * c
     
-    def optimizar_ruta(origen, destinos):
-        """
-        Ordena los destinos usando el algoritmo del 'vecino más cercano'
-        origen: (lat, lng)
-        destinos: lista de diccionarios con {'Cliente': '...', 'Latitud': x, 'Longitud': y}
-        """
-        ruta_ordenada = []
-        pendientes = destinos.copy()
-        actual = origen
+    def calcular_distancia_haversine(p1, p2):
+        """Calcula la distancia en km entre dos puntos (lat, lng)"""
+        lat1, lon1 = p1
+        lat2, lon2 = p2
+        R = 6371.0  # Radio terrestre en km
         
-        while pendientes:
-            # Busca el destino más cercano al punto actual
-            mas_cercano = min(pendientes, key=lambda p: calcular_distancia(actual, (p['Latitud'], p['Longitud'])))
-            ruta_ordenada.append(mas_cercano)
-            actual = (mas_cercano['Latitud'], mas_cercano['Longitud'])
-            pendientes.remove(mas_cercano)
-            
+        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+        return R * (2 * asin(sqrt(a)))
+    
+    def optimizar_ruta(origen, destinos, destino_final=None):
+        """
+        Optimiza la ruta global usando Google OR-Tools entre un origen y un destino final.
+        origen: tuple (lat, lng)
+        destinos: lista de dicts [{'Cliente': '...', 'Latitud': x, 'Longitud': y}, ...]
+        destino_final: tuple (lat, lng) opcional para el punto donde finaliza el recorrido.
+        """
+        if not destinos:
+            return []
+    
+        def extraer_coords(p):
+            if isinstance(p, (tuple, list)):
+                return float(p[0]), float(p[1])
+            elif isinstance(p, dict):
+                return float(p.get('Latitud', 0)), float(p.get('Longitud', 0))
+            return 0.0, 0.0
+    
+        lat_origen, lng_origen = extraer_coords(origen)
+    
+        # 1. Construir la lista de puntos
+        # Puntos: [0: Origen] + [1..N: Entregas] (+ [N+1: Destino Final] si existe)
+        tiene_destino_final = destino_final is not None
+        
+        puntos = [{'Latitud': lat_origen, 'Longitud': lng_origen}] + list(destinos)
+        
+        if tiene_destino_final:
+            lat_fin, lng_fin = extraer_coords(destino_final)
+            puntos.append({'Latitud': lat_fin, 'Longitud': lng_fin})
+    
+        n_puntos = len(puntos)
+        idx_inicio = 0
+        idx_fin = n_puntos - 1 if tiene_destino_final else None
+    
+        # 2. Construir la matriz de distancias
+        matriz_distancias = np.zeros((n_puntos, n_puntos), dtype=int)
+        for i in range(n_puntos):
+            for j in range(n_puntos):
+                if i != j:
+                    p1 = (puntos[i]['Latitud'], puntos[i]['Longitud'])
+                    p2 = (puntos[j]['Latitud'], puntos[j]['Longitud'])
+                    dist_km = calcular_distancia_haversine(p1, p2)
+                    matriz_distancias[i][j] = int(dist_km * 1000)
+    
+        # 3. Configurar OR-Tools
+        if tiene_destino_final:
+            # Asigna inicio en 0 y final en la última posición (destino_final)
+            manager = pywrapcp.RoutingIndexManager(n_puntos, 1, [idx_inicio], [idx_fin])
+        else:
+            # Comienza en 0 y termina en cualquier último cliente
+            manager = pywrapcp.RoutingIndexManager(n_puntos, 1, idx_inicio)
+    
+        routing = pywrapcp.RoutingModel(manager)
+    
+        def callback_distancia(from_index, to_index):
+            from_node = manager.IndexToNode(from_index)
+            to_node = manager.IndexToNode(to_index)
+            return matriz_distancias[from_node][to_node]
+    
+        transit_callback_index = routing.RegisterTransitCallback(callback_distancia)
+        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+    
+        # 4. Parámetros de búsqueda
+        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        search_parameters.first_solution_strategy = (
+            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        )
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+        search_parameters.time_limit.seconds = 2
+    
+        # 5. Resolver y retornar orden
+        solucion = routing.SolveWithParameters(search_parameters)
+    
+        ruta_ordenada = []
+        if solucion:
+            index = routing.Start(0)
+            while not routing.IsEnd(index):
+                node = manager.IndexToNode(index)
+                # Filtramos el punto de origen (0) y el de destino final para retornar solo repartos
+                if node != 0 and (not tiene_destino_final or node != idx_fin):
+                    ruta_ordenada.append(destinos[node - 1])
+                index = solucion.Value(routing.NextVar(index))
+        else:
+            ruta_ordenada = list(destinos)
+    
         return ruta_ordenada
-
-    def generar_diagrama_optimizada(grupo_repartos, punto_origen, fecha):
+    
+    def generar_diagrama_optimizada(grupo_repartos, punto_origen, fecha, punto_destino=None):
         repartos_validos = grupo_repartos.dropna(subset=['Latitud', 'Longitud'])
-        ruta_optima = optimizar_ruta(punto_origen, repartos_validos.to_dict('records'))
+        
+        # Pasamos el punto_destino a la optimización de OR-Tools
+        ruta_optima = optimizar_ruta(
+            origen=punto_origen, 
+            destinos=repartos_validos.to_dict('records'), 
+            destino_final=punto_destino
+        )
         
         # 2. Inicializamos el estado del orden
         if f"orden_{fecha}" not in st.session_state:
@@ -618,7 +697,7 @@ else:
         
         st.divider()
         st.text_area("Selecciona y copia:", value=texto_whatsapp, height=200)
-
+    
     def extraer_coords_desde_link(link):
         # Busca el patrón @-XX.XXXX,-YY.YYYY en el link
         match = re.search(r'@(-?\d+\.\d+),(-?\d+\.\d+)', link)
@@ -860,6 +939,22 @@ else:
                 
         except Exception as e:
             st.error(f"Error al actualizar estados: {e}")
+
+    @st.cache_data(ttl=600)
+    def cargar_puntos_reparto():
+        """
+        Recupera los puntos de reparto guardados en Supabase.
+        Retorna un diccionario: {"Nombre del punto": (lat, lng), ...}
+        """
+        try:
+            data = db.table("puntos_reparto").select("*").execute().data
+            puntos = {}
+            for p in data:
+                puntos[p['nombre']] = (float(p['latitud']), float(p['longitud']))
+            return puntos
+        except Exception as e:
+            st.error(f"Error al cargar puntos de reparto desde la base de datos: {e}")
+            return {}
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -3932,11 +4027,14 @@ else:
     # =====================================================================
     elif menu == "🚚 Gestión de Repartos":
         
+        # Cargar puntos guardados desde Supabase
+        puntos_db = cargar_puntos_reparto()
+    
         # Obtenemos ventas pendientes de reparto
         ventas_reparto = db.table("VENTAS_PENDIENTES") \
-                        .select("*") \
-                        .eq("Forma_Entrega", "Reparto") \
-                        .execute().data
+                            .select("*") \
+                            .eq("Forma_Entrega", "Reparto") \
+                            .execute().data
         
         if not ventas_reparto:
             st.info("No hay repartos pendientes.")
@@ -3945,50 +4043,95 @@ else:
             df['Fecha_Entrega'] = pd.to_datetime(df['Fecha_Entrega']).dt.date
             df = df.sort_values(by='Fecha_Entrega')
             
-            # 1. Calculamos el total general
             total_general = len(df)
-            
-            # 2. Título con el número integrado entre paréntesis
             st.markdown(f"## 🗺️ Planificación de Repartos ({total_general})")
             st.divider()
             
-            # Recuperamos el rol del usuario actual
             rol_usuario = st.session_state.get('rol', 'Vendedor')
             
-            # 3. Agrupamos por fecha
             for fecha, grupo in df.groupby('Fecha_Entrega'):
-                # Título del día con su propio contador entre paréntesis
                 st.subheader(f"📅 {fecha} ({len(grupo)})")
                 
-                # --- CONTROL DE ACCESO POR ROL ---
-                # Solo el Administrador puede configurar el origen y generar el diagrama optimizado
                 if rol_usuario == "Administrador":
-                    with st.expander(f"⚙️ Configurar Origen para {fecha}"):
-                        opciones = {"Pañalera (Local)": (-24.793734909695726, -65.42769672376464), "Otro (Link de Maps)": "link"}
-                        sel_origen = st.selectbox("¿Desde dónde sale el reparto?", list(opciones.keys()), key=f"sel_{fecha}")
+                    with st.expander(f"⚙️ Configurar Origen y Destino para {fecha}"):
+                        c_origen, c_destino = st.columns(2)
                         
-                        if sel_origen == "Otro (Link de Maps)":
-                            link_maps = st.text_input("Pega el link de Google Maps aquí:")
-                            if link_maps:
-                                coords = extraer_coords_desde_link(link_maps)
-                                if coords:
-                                    st.success(f"Coordenadas detectadas: {coords}")
-                                    punto_partida = coords
+                        # --- CONFIGURACIÓN ORIGEN ---
+                        with c_origen:
+                            st.markdown("**📍 Punto de Partida**")
+                            # Armamos las opciones mezclando los puntos de la BD + la opción de Link
+                            opciones_origen = {**puntos_db, "Otro (Link de Maps)": "link"}
+                            
+                            sel_origen = st.selectbox(
+                                "¿Desde dónde sale el reparto?", 
+                                list(opciones_origen.keys()), 
+                                key=f"sel_orig_{fecha}"
+                            )
+                            
+                            if sel_origen == "Otro (Link de Maps)":
+                                link_orig = st.text_input("Pega el link de origen:", key=f"link_orig_{fecha}")
+                                if link_orig:
+                                    coords_orig = extraer_coords_desde_link(link_orig)
+                                    if coords_orig:
+                                        st.success(f"Origen: {coords_orig}")
+                                        punto_partida = coords_orig
+                                    else:
+                                        st.error("No se pudo leer el link. Se usará el Local por defecto.")
+                                        punto_partida = list(puntos_db.values())[0]
                                 else:
-                                    st.error("No pude leer el link. Asegúrate de copiarlo desde el botón 'Compartir' de Google Maps.")
-                                    punto_partida = (-24.7825, -65.4111) # Default
-                        else:
-                            punto_partida = opciones[sel_origen]
-
+                                    punto_partida = list(puntos_db.values())[0]
+                            else:
+                                punto_partida = opciones_origen[sel_origen]
+    
+                        # --- CONFIGURACIÓN DESTINO FINAL ---
+                        with c_destino:
+                            st.markdown("**🏁 Punto de Finalización**")
+                            opciones_destino = {**puntos_db, "Otro (Link de Maps)": "link"}
+                            
+                            # 1. Definimos dinámicamente el nombre y las coordenadas del punto por defecto (primer punto de la BD)
+                            nombre_defecto = list(puntos_db.keys())[0] if puntos_db else "Punto Principal"
+                            coords_defecto = list(puntos_db.values())[0] if puntos_db else None
+                        
+                            # Preseleccionamos por defecto la primera opción de la BD (índice 0)
+                            index_def = 0
+                        
+                            sel_destino = st.selectbox(
+                                "¿Dónde termina la ruta?", 
+                                list(opciones_destino.keys()), 
+                                index=index_def,
+                                key=f"sel_dest_{fecha}"
+                            )
+                            
+                            if sel_destino == "Otro (Link de Maps)":
+                                link_dest = st.text_input("Pega el link de destino:", key=f"link_dest_{fecha}")
+                                if link_dest:
+                                    coords_dest = extraer_coords_desde_link(link_dest)
+                                    if coords_dest:
+                                        st.success(f"Destino: {coords_dest}")
+                                        punto_llegada = coords_dest
+                                    else:
+                                        # 2. Mensaje y fallback totalmente dinámicos
+                                        st.error(f"No se pudo leer el link. Se usará {nombre_defecto} por defecto.")
+                                        punto_llegada = coords_defecto
+                                else:
+                                    punto_llegada = coords_defecto
+                            else:
+                                punto_llegada = opciones_destino[sel_destino]
+    
                     # Botón de optimización
                     if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
                         st.session_state[f"mostrar_diagrama_{fecha}"] = True
+                        st.session_state[f"p_partida_{fecha}"] = punto_partida
+                        st.session_state[f"p_llegada_{fecha}"] = punto_llegada
                     
                     # Si la bandera es True, mostramos el mapa interactivo
                     if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
-                        generar_diagrama_optimizada(grupo, punto_partida, fecha)
+                        p_partida = st.session_state.get(f"p_partida_{fecha}", punto_partida)
+                        p_llegada = st.session_state.get(f"p_llegada_{fecha}", punto_llegada)
+                        
+                        generar_diagrama_optimizada(grupo, p_partida, fecha, punto_destino=p_llegada)
                 
-                # 3. Iteramos sobre los repartos de ESE día (Visible para TODOS los roles)
+                # Iteramos sobre los repartos del día
                 for _, v in grupo.iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([2, 2, 1])
@@ -3998,7 +4141,6 @@ else:
                         if v.get('Link_Maps_Entrega'):
                             c3.link_button("📍 Maps", v['Link_Maps_Entrega'])
                         
-                        # 👈 MOSTRAR OBSERVACIÓN SOLO SI TIENE UN TEXTO VÁLIDO
                         obs_entrega = v.get('Observaciones', '')
                         if pd.notna(obs_entrega) and str(obs_entrega).strip() and str(obs_entrega).strip().lower() not in ["nan", "none"]:
                             st.info(f"📝 **Nota para el repartidor:** {obs_entrega}", icon="📌")
