@@ -2680,34 +2680,38 @@ else:
                                         border = True
                                         
                                     with st.container(border=border):
-                                        c1, c2, c3, c4, c5 = st.columns([3, 1.5, 1.5, 2, 2])
+                                        # Ajustamos proporciones de columnas para dar espacio al input del Admin
+                                        c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 2])
                                         c1.write(f"**{item['Nombre']}** (`{item['id_producto']}`)")
                                         c2.write(f"Snap: **{item['stock_sistema_snap']}**")
                                         c3.write(f"Contado: **{item['stock_contado']}**")
-                                        c4.write(f"Estado: **{color_status}**")
                                         
-                                        with c5:
-                                            if item['estado_item'] == 'PENDIENTE' and dif != 0:
+                                        # Campo para que el Admin ingrese / modifique el valor si la realidad difiere
+                                        valor_admin = c4.number_input(
+                                            "Re-conteo Admin", 
+                                            min_value=0, 
+                                            value=int(item['stock_contado']), 
+                                            key=f"input_admin_stk_{item['id']}",
+                                            label_visibility="collapsed"
+                                        )
+                                        
+                                        c5.write(f"Estado: **{color_status}**")
+                                        
+                                        with c6:
+                                            if item['estado_item'] == 'PENDIENTE':
                                                 if st.button("✔️ Aplicar Ajuste", key=f"btn_aj_{item['id']}"):
                                                     try:
                                                         # 1. Asegurar tipo text estricto para la clave
                                                         id_prod_str = str(item['id_producto']).strip()
                                                         
-                                                        # 2. Consultar el stock actual en tiempo real en la BD
+                                                        # 2. Consultar el stock actual previo en la BD para el log
                                                         p_actual = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_prod_str).execute().data
+                                                        stock_previo = float(p_actual[0]['Stock_Actual'] or 0) if p_actual else 0.0
                                                         
-                                                        if not p_actual:
-                                                            st.error(f"No se encontró el producto con ID '{id_prod_str}' en la base de datos.")
-                                                            st.stop()
+                                                        # 3. El valor ingresado por el Admin PISA directamente el stock
+                                                        nuevo_stock_int = int(valor_admin)
                                                         
-                                                        # Convertir a float primero por si viene None o vacio, luego operar
-                                                        stock_vivo = float(p_actual[0]['Stock_Actual'] or 0)
-                                                        dif_float = float(item['diferencia'])
-                                                        
-                                                        # 3. CASTEO ESTRICTO A INT4 (int nativo de Python)
-                                                        nuevo_stock_int = int(round(stock_vivo + dif_float))
-                                                        
-                                                        # 4. Actualizar tabla PRODUCTOS
+                                                        # 4. Actualizar tabla PRODUCTOS con el valor corregido
                                                         db.table("PRODUCTOS").update({
                                                             "Stock_Actual": nuevo_stock_int
                                                         }).eq("ID_Producto", id_prod_str).execute()
@@ -2725,15 +2729,15 @@ else:
                                                                 accion="UPDATE",
                                                                 id_entidad=id_prod_str,
                                                                 detalles={
-                                                                    "operacion": "Ajuste de Inventario",
-                                                                    "diferencia_aplicada": dif_float,
-                                                                    "stock_anterior": stock_vivo,
+                                                                    "operacion": "Ajuste Directo Conteo Admin",
+                                                                    "conteo_vendedor": float(item['stock_contado']),
+                                                                    "stock_anterior": stock_previo,
                                                                     "nuevo_stock": nuevo_stock_int
                                                                 },
                                                                 usuario=st.session_state.get('usuario_actual', 'Admin')
                                                             )
                                                         
-                                                        st.success(f"✅ ¡Ajustado! {int(stock_vivo)} ➔ {nuevo_stock_int}")
+                                                        st.success(f"✅ ¡Stock Fijado! {int(stock_previo)} ➔ {nuevo_stock_int}")
                                                         st.rerun()
                                                         
                                                     except Exception as e:
