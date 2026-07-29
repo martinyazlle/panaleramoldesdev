@@ -1630,7 +1630,6 @@ else:
                     # --- NUEVO: BLINDAJE DE SEGURIDAD PARA GIFT CARDS ---
                     for pago in st.session_state.pagos_split:
                         if "Gift Card" in pago["metodo"]:
-                            # Re-consultamos el saldo real en la base de datos en este instante
                             gc_check = db.table("GIFT_CARDS") \
                                          .select("Saldo_Actual") \
                                          .eq("ID_GiftCard", st.session_state.get('gc_activa_id')) \
@@ -1640,7 +1639,7 @@ else:
                             
                             if pago["monto"] > saldo_real:
                                 st.error(f"❌ ¡Saldo insuficiente en Gift Card! Disponible: ${saldo_real:,.2f}")
-                                st.stop() # Detiene todo el proceso antes de que se grabe nada
+                                st.stop()
                     # ----------------------------------------------------
                     
                     try:
@@ -1648,11 +1647,17 @@ else:
                         id_v = datetime.now().strftime("%Y%m%d%H%M%S")
                         f = datetime.now().strftime("%Y-%m-%d")
                         
-                        # --- OBTENER TURNO ANTES DE NADA ---
+                        # --- OBTENER TURNO Y NOMBRE DE USUARIO ---
                         turno_res = db.table("CONTROL_TURNOS").select("ID_Turno").eq("Estado", "Abierto").maybe_single().execute()
                         id_turno_val = turno_res.data['ID_Turno'] if (turno_res and turno_res.data) else "SIN_TURNO"
-
-                        # 2. Registrar Cabecera (AÑADIDO ID_Vendedor DINÁMICO)
+            
+                        # Obtenemos el nombre del vendedor (o tomamos el de st.session_state si existe)
+                        nombre_usuario_actual = st.session_state.get('usuario_nombre')
+                        if not nombre_usuario_actual:
+                            u_res = db.table("USUARIOS").select("Nombre").eq("ID_Usuario", vendedor_id_final).single().execute()
+                            nombre_usuario_actual = u_res.data.get('Nombre') if (u_res and u_res.data) else str(vendedor_id_final)
+            
+                        # 2. Registrar Cabecera
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
                         db.table("VENTAS_CABECERA").insert({
                             "ID_Venta": id_v,
@@ -1663,46 +1668,63 @@ else:
                             "Total": total_final_vta,
                             "Forma_Entrega": st.session_state.tipo_entrega,
                             "Direccion_Entrega": st.session_state.direccion_entrega if st.session_state.tipo_entrega == "Reparto" else "N/A",
-                            "Observaciones": st.session_state.get('observaciones_entrega', '') # 👈 AGREGAR AQUÍ
+                            "Observaciones": st.session_state.get('observaciones_entrega', '')
                         }).execute()
                         
                         for art in st.session_state.carrito_vta:
-                            # 1. CONSULTA EL COSTO ACTUAL DEL PRODUCTO
-                            prod_data = db.table("PRODUCTOS").select("Precio_Costo").eq("ID_Producto", str(art['id'])).single().execute()
+                            # 1. CONSULTA EL COSTO ACTUAL Y NOMBRE DEL PRODUCTO
+                            prod_data = db.table("PRODUCTOS").select("Precio_Costo", "Nombre").eq("ID_Producto", str(art['id'])).single().execute()
                             
-                            # 2. DEFINIMOS EL COSTO (si no encuentra el producto, usamos 0 por seguridad)
+                            # 2. DEFINIMOS EL COSTO Y NOMBRE
                             costo_historico = prod_data.data.get('Precio_Costo', 0) if prod_data.data else 0
-
-                            # 3. INSERTAMOS EN VENTAS_DETALLE INCLUYENDO EL COSTO CAPTURADO
+                            nombre_prod = art.get('nombre') or (prod_data.data.get('Nombre') if prod_data.data else 'Artículo')
+            
+                            # 3. INSERTAMOS EN VENTAS_DETALLE
                             db.table("VENTAS_DETALLE").insert({
                                 "ID_Venta": id_v,
                                 "ID_Producto": str(art['id']),
                                 "Cantidad": int(art['cantidad']),
                                 "Precio_Unitario": float(art['precio']),
-                                "Precio_Costo_Unitario": float(costo_historico), # <--- AQUÍ ESTÁ LA MAGIA
+                                "Precio_Costo_Unitario": float(costo_historico),
                                 "Subtotal": float(art['subtotal'])
                             }).execute()
                             
+                            # 4. ACTUALIZAMOS EL STOCK Y REGISTRAMOS EN MOVIMIENTOS_STOCK
                             prod_res = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", art['id']).single().execute()
                             if prod_res.data:
                                 stock_actual = int(prod_res.data.get('Stock_Actual', 0))
-                                db.table("PRODUCTOS").update({"Stock_Actual": stock_actual - art['cantidad']}) \
+                                cantidad_vendida = int(art['cantidad'])
+                                stock_nuevo = stock_actual - cantidad_vendida
+            
+                                # Actualización del stock actual
+                                db.table("PRODUCTOS").update({"Stock_Actual": stock_nuevo}) \
                                     .eq("ID_Producto", art['id']).execute()
-
-                        # 4. Registrar Pagos en la nueva tabla VENTAS_PAGOS
+            
+                                # Registro del movimiento en el Kardex guardando el Nombre del Usuario
+                                db.table("MOVIMIENTOS_STOCK").insert({
+                                    "id_producto": str(art['id']),
+                                    "nombre_producto": nombre_prod,
+                                    "tipo_movimiento": "VENTA",
+                                    "cantidad": -cantidad_vendida,
+                                    "stock_anterior": stock_actual,
+                                    "stock_nuevo": stock_nuevo,
+                                    "origen_referencia": f"Venta ID: {id_v}",
+                                    "usuario": str(nombre_usuario_actual)  # 👈 Guardamos el Nombre
+                                }).execute()
+            
+                        # 4. Registrar Pagos en VENTAS_PAGOS
                         for pago in st.session_state.pagos_split:
                             db.table("VENTAS_PAGOS").insert({
                                 "ID_Venta": id_v,
                                 "Metodo_Pago": pago["metodo"],
                                 "Monto": float(pago["monto"])
                             }).execute()
-
+            
                         # 5. Registrar en Caja
                         for pago in st.session_state.pagos_split:
                             metodo = pago["metodo"]
                             monto = float(pago["monto"])
                             
-                            # --- A. REGISTRO DE INGRESO (Siempre ocurre) ---
                             db.table("CAJA").insert({
                                 "ID_Turno": id_turno_val,
                                 "Fecha": datetime.now().isoformat(),
@@ -1711,22 +1733,18 @@ else:
                                 "Monto": monto,
                                 "Forma_Pago": metodo
                             }).execute()
-
-                            # --- B. LÓGICA DE EGRESO AUTOMÁTICO ---
-                            # Si es efectivo y reparto, O si es otro método (incluyendo Gift Card)
+            
                             es_efectivo_reparto = (metodo == "Efectivo" and st.session_state.tipo_entrega == "Reparto")
                             es_otro_metodo = (metodo != "Efectivo")
                             
                             if es_efectivo_reparto or es_otro_metodo:
-                                # Aquí incluimos la lógica de descuento de saldo si es Gift Card
                                 if "Gift Card" in metodo:
                                     gc_id = st.session_state.get('gc_activa_id')
                                     nuevo_saldo = st.session_state.get('gc_saldo_disponible', 0) - monto
                                     db.table("GIFT_CARDS").update({"Saldo_Actual": float(nuevo_saldo)}).eq("ID_GiftCard", gc_id).execute()
                                     if nuevo_saldo <= 0:
                                         db.table("GIFT_CARDS").update({"Estado": False}).eq("ID_GiftCard", gc_id).execute()
-
-                                # Registro del egreso en caja
+            
                                 db.table("CAJA").insert({
                                     "ID_Turno": id_turno_val,
                                     "Fecha": datetime.now().isoformat(),
@@ -1735,16 +1753,17 @@ else:
                                     "Monto": monto,
                                     "Forma_Pago": metodo
                                 }).execute()
+            
                         if 'id_pendiente_cargado' in st.session_state:
                             db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", st.session_state.id_pendiente_cargado).execute()
                             del st.session_state.id_pendiente_cargado
-
+            
                         st.success("✅ Venta registrada correctamente!")
                         st.session_state.carrito_vta = []
                         st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
                         st.session_state.observaciones_entrega = ""
                         st.rerun()
-
+            
                     except Exception as e:
                         st.error(f"Error al registrar: {e}")
 
@@ -2234,40 +2253,45 @@ else:
         # --- PESTAÑA CAMBIOS ---
         with tab_cambios:
             st.subheader("🔄 Gestión de Cambios y Devoluciones")
-    
+        
             if st.session_state.get('rol') == "Administrador":
                 st.divider()
                 st.subheader("🛡️ Panel de Supervisión (Admin)")
                 pendientes = db.table("PRE_CAMBIOS").select("*").eq("Estado", "PENDIENTE").execute().data
-                
+        
                 if pendientes:
                     for p in pendientes:
                         with st.container(border=True):
                             c1, c2 = st.columns([3, 1])
                             with c1:
-                                st.markdown(f"**Producto:** {p['Nombre']} | **Usuario:** {p['Usuario']}")
+                                st.markdown(f"**Producto:** {p['Nombre']} | **Usuario Solicitante:** {p['Usuario']}")
                                 st.caption(f"Motivo original: {p['Descripción']}")
-                            
+        
                             with st.form(f"form_admin_{p['id']}"):
                                 col_a, col_b, col_c = st.columns(3)
                                 new_cant = col_a.number_input("Cantidad:", value=max(p['Entra'], p['Sale']), key=f"cant_{p['id']}")
                                 new_tipo = col_b.selectbox("Tipo:", ["ENTRA", "SALE"], index=0 if p['Entra'] > 0 else 1, key=f"tipo_{p['id']}")
                                 new_desc = col_c.text_input("Motivo editado:", value=p['Descripción'], key=f"desc_{p['id']}")
-                                
+        
                                 btn_col1, btn_col2 = st.columns(2)
                                 if btn_col1.form_submit_button("💾 Aprobar y Procesar", use_container_width=True):
-                                    prod_data = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", p['Código']).execute().data
-                                    
+                                    prod_data = db.table("PRODUCTOS").select("Stock_Actual", "Nombre").eq("ID_Producto", p['Código']).execute().data
+        
                                     if prod_data:
                                         stock_viejo = int(prod_data[0]['Stock_Actual'])
-                                        stock_nuevo = (stock_viejo + new_cant) if new_tipo == 'ENTRA' else (stock_viejo - new_cant)
-                                            
+                                        nombre_producto_kardex = prod_data[0].get('Nombre', p['Nombre'])
+        
+                                        cantidad_movimiento = int(new_cant) if new_tipo == 'ENTRA' else -int(new_cant)
+                                        stock_nuevo = stock_viejo + cantidad_movimiento
+        
+                                        # 1. Actualización de Stock Actual del Producto
                                         db.table("PRODUCTOS").update({"Stock_Actual": stock_nuevo}).eq("ID_Producto", p['Código']).execute()
-                                        
+        
                                         try:
+                                            # 2. Registrar en Tabla CAMBIOS
                                             db.table("CAMBIOS").insert({
                                                 "Fecha": datetime.now().isoformat(),
-                                                "Usuario": st.session_state.get('usuario_actual', 'Administrador'),
+                                                "Usuario": st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Administrador'),
                                                 "Código": p['Código'],
                                                 "Nombre": p['Nombre'],
                                                 "Descripción": new_desc,
@@ -2276,37 +2300,53 @@ else:
                                                 "existencia_ant": stock_viejo,
                                                 "existencia_actual": stock_nuevo
                                             }).execute()
-                                            
+        
+                                            # 3. REGISTRAR EN MOVIMIENTOS_STOCK (KARDEX)
+                                            usuario_admin = st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Administrador')
+                                            tipo_mov_kardex = "DEVOLUCIÓN ENTRADA" if new_tipo == 'ENTRA' else "CAMBIO SALIDA"
+        
+                                            db.table("MOVIMIENTOS_STOCK").insert({
+                                                "id_producto": str(p['Código']),
+                                                "nombre_producto": nombre_producto_kardex,
+                                                "tipo_movimiento": tipo_mov_kardex,
+                                                "cantidad": cantidad_movimiento,
+                                                "stock_anterior": stock_viejo,
+                                                "stock_nuevo": stock_nuevo,
+                                                "origen_referencia": f"Cambio/Devolución ID: {p['id']} - Motivo: {new_desc}",
+                                                "usuario": str(usuario_admin)
+                                            }).execute()
+        
+                                            # 4. Cambiar estado a PROCESADO
                                             db.table("PRE_CAMBIOS").update({"Estado": "PROCESADO"}).eq("id", p['id']).execute()
-                                            st.success("✅ Stock actualizado correctamente.")
+                                            st.success("✅ Stock y Kardex actualizados correctamente.")
                                             st.rerun()
-    
+        
                                         except Exception as e:
-                                            st.error(f"Error al insertar en CAMBIOS: {e}")
-                                
+                                            st.error(f"Error al procesar el cambio: {e}")
+        
                                 if btn_col2.form_submit_button("❌ Rechazar", use_container_width=True):
                                     db.table("PRE_CAMBIOS").update({"Estado": "RECHAZADO"}).eq("id", p['id']).execute()
                                     st.rerun()
                 else:
                     st.info("No hay cambios pendientes.")
                 st.divider()
-            
+        
             if 'lista_cambios' not in st.session_state:
                 st.session_state.lista_cambios = []
-            
+        
             opciones_productos = (st.session_state.df_prod['Nombre'] + " (ID: " + 
                                   st.session_state.df_prod['ID_Producto'].astype(str) + ")").tolist()
-            
+        
             prod_seleccionado = st.selectbox("Buscar producto", options=opciones_productos, index=None, placeholder="Escriba para buscar...", key="buscador_cambios")
-            
+        
             if prod_seleccionado:
                 nombre_real = prod_seleccionado.split(" (ID: ")[0]
                 id_real = prod_seleccionado.split("(ID: ")[1].replace(")", "")
-                
+        
                 c1, c2 = st.columns(2)
                 cant_sel = c1.number_input("Cantidad:", min_value=1, value=1, key="cant_input")
                 tipo_sel = c2.radio("Tipo:", ["ENTRA", "SALE"], horizontal=True, key="tipo_input")
-                
+        
                 if st.button("➕ Añadir a la lista"):
                     st.session_state.lista_cambios.append({
                         "ID": id_real,
@@ -2315,19 +2355,20 @@ else:
                         "Tipo": tipo_sel
                     })
                     st.rerun()
-            
+        
             if st.session_state.lista_cambios:
                 st.write("Resumen del movimiento:")
                 st.table(pd.DataFrame(st.session_state.lista_cambios))
-                
+        
                 if st.button("❌ Limpiar lista"):
                     st.session_state.lista_cambios = []
                     st.rerun()
-            
+        
                 motivo = st.text_input("Motivo del cambio:")
-                    
+        
                 if st.button("📤 Enviar Pre-cambio a Revisión"):
                     try:
+                        usuario_solicitante = st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Desconocido')
                         for item in st.session_state.lista_cambios:
                             db.table("PRE_CAMBIOS").insert({
                                 "Fecha": datetime.now().isoformat(),
@@ -2337,7 +2378,7 @@ else:
                                 "Entra": int(item['Cantidad']) if item['Tipo'] == 'ENTRA' else 0,
                                 "Sale": int(item['Cantidad']) if item['Tipo'] == 'SALE' else 0,
                                 "Estado": "PENDIENTE",
-                                "Usuario": st.session_state.get('usuario_actual', 'Desconocido')
+                                "Usuario": str(usuario_solicitante)
                             }).execute()
                         st.success("✅ Enviado a revisión.")
                         st.session_state.lista_cambios = []
@@ -2391,43 +2432,74 @@ else:
                                 st.stop() 
                             
                             try:
-                                nuevo_stock_fardo = int(fila_fardo['Stock_Actual']) - 1
-                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", id_fardo).execute()
-                                
+                                # 1. Verificar existencia de la cajita individual
                                 prod_cajita = db.table("PRODUCTOS").select("Stock_Actual", "Nombre").eq("ID_Producto", id_cajita).execute().data
                                 if not prod_cajita:
                                     st.error("¡Error! El código de la cajita no existe en la base de datos.")
                                     st.stop()
-                                    
+        
+                                usuario_logueado = st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Desconocido')
+        
+                                # 2. Descuento del Fardo
+                                stock_fardo_old = int(fila_fardo['Stock_Actual'])
+                                nuevo_stock_fardo = stock_fardo_old - 1
+                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", id_fardo).execute()
+        
+                                # 3. Incremento de la Cajita Individual
                                 stock_cajita_old = int(prod_cajita[0]['Stock_Actual'])
                                 nombre_cajita = prod_cajita[0].get('Nombre', 'Cajita Individual')
-                                nuevo_stock_cajita = stock_cajita_old + unidades
+                                nuevo_stock_cajita = stock_cajita_old + int(unidades)
                                 db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_cajita}).eq("ID_Producto", id_cajita).execute()
-                                
-                                usuario_logueado = st.session_state.get('usuario_actual', 'Desconocido')
-                                
+        
+                                # 4. Registrar en Tabla CAMBIOS (Fardo)
                                 db.table("CAMBIOS").insert({
                                     "Fecha": datetime.now().isoformat(),
-                                    "Usuario": usuario_logueado,
+                                    "Usuario": str(usuario_logueado),
                                     "Código": id_fardo,
                                     "Nombre": fila_fardo['Nombre'],
                                     "Descripción": f"División de fardo: Se transformó en {unidades} unidades de {id_cajita}",
                                     "Entra": 0, "Sale": 1,
-                                    "existencia_ant": int(fila_fardo['Stock_Actual']),
+                                    "existencia_ant": stock_fardo_old,
                                     "existencia_actual": nuevo_stock_fardo
                                 }).execute()
                                 
+                                # 5. Registrar en Tabla CAMBIOS (Cajita)
                                 db.table("CAMBIOS").insert({
                                     "Fecha": datetime.now().isoformat(),
-                                    "Usuario": usuario_logueado,
+                                    "Usuario": str(usuario_logueado),
                                     "Código": id_cajita,
-                                    "Nombre": "Cajitas (División)",
+                                    "Nombre": nombre_cajita,
                                     "Descripción": f"Ingreso por división de fardo {id_fardo}",
                                     "Entra": int(unidades), "Sale": 0,
                                     "existencia_ant": stock_cajita_old,
                                     "existencia_actual": nuevo_stock_cajita
                                 }).execute()
+        
+                                # 6. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX) - FARDO (SALIDA)
+                                db.table("MOVIMIENTOS_STOCK").insert({
+                                    "id_producto": str(id_fardo),
+                                    "nombre_producto": str(fila_fardo['Nombre']),
+                                    "tipo_movimiento": "DIVISIÓN FARDO (SALIDA)",
+                                    "cantidad": -1,
+                                    "stock_anterior": stock_fardo_old,
+                                    "stock_nuevo": nuevo_stock_fardo,
+                                    "origen_referencia": f"División en {unidades} uds de Cajita (ID: {id_cajita})",
+                                    "usuario": str(usuario_logueado)
+                                }).execute()
+        
+                                # 7. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX) - CAJITA (ENTRADA)
+                                db.table("MOVIMIENTOS_STOCK").insert({
+                                    "id_producto": str(id_cajita),
+                                    "nombre_producto": str(nombre_cajita),
+                                    "tipo_movimiento": "DIVISIÓN FARDO (ENTRADA)",
+                                    "cantidad": int(unidades),
+                                    "stock_anterior": stock_cajita_old,
+                                    "stock_nuevo": nuevo_stock_cajita,
+                                    "origen_referencia": f"Ingreso por división de Fardo (ID: {id_fardo})",
+                                    "usuario": str(usuario_logueado)
+                                }).execute()
                                 
+                                # 8. Log de Auditoría
                                 log_auditoria(
                                     tabla="PRODUCTOS",
                                     accion="UPDATE",
@@ -2446,23 +2518,26 @@ else:
                                 
                             except Exception as e:
                                 st.error(f"Error al procesar la división: {e}")
-
         # --- PESTAÑA INVENTARIO (NUEVA) ---
         with tab_inventario:
             st.subheader("📋 Módulo de Toma de Inventarios")
-
-            # Definir vistas disponibles según el Rol
+        
+            # -------------------------------------------------------------
+            # CONFIGURACIÓN DE PESTAÑAS SEGÚN ROL
+            # -------------------------------------------------------------
             if st.session_state.rol == "Administrador":
-                subtab_vendedor, subtab_admin = st.tabs(["📝 Realizar Recuento (Vendedor)", "📊 Auditoría y Ajustes (Admin)"])
+                tab_vendedor, tab_admin = st.tabs(["📝 Realizar Recuento (Vendedor)", "📊 Auditoría y Ajustes (Admin)"])
             else:
-                subtab_vendedor = st.container()
-                subtab_admin = None
-
-            # --- VISTA 1: VENDEDOR ---
-            with subtab_vendedor if st.session_state.rol == "Administrador" else st.container():
+                tab_vendedor = st.container()
+                tab_admin = None
+        
+            # =============================================================
+            # VISTA 1: VENDEDOR (TOMA DE RECUENTO)
+            # =============================================================
+            with tab_vendedor:
                 st.caption("Efectúe el recuento físico de la mercadería.")
                 
-                # Excluir productos inactivos
+                # Filtrar solo productos activos
                 df_activos = st.session_state.df_prod.copy()
                 if 'Estado' in df_activos.columns:
                     df_activos = df_activos[df_activos['Estado'] != 'INACTIVO']
@@ -2477,16 +2552,12 @@ else:
                 productos_a_contar = pd.DataFrame()
                 parametro_conteo = ""
                 
-                # -------------------------------------------------------------
-                # MANEJO DE RESETEO LIMPIO DE WIDGETS
-                # -------------------------------------------------------------
+                # RESETEO LIMPIO DE SELECTBOX DE MARCAS
                 if st.session_state.get("reset_inventario", False):
                     st.session_state["inv_marca_sel"] = None
                     st.session_state["reset_inventario"] = False
-
-                # -------------------------------------------------------------
-                # 1. OPCIÓN POR MARCA
-                # -------------------------------------------------------------
+        
+                # --- OPCIÓN A: POR MARCA ---
                 if modo_conteo == "Por Marca":
                     marcas_disp = sorted(df_activos['Marca'].dropna().unique().tolist()) if 'Marca' in df_activos.columns else []
                     
@@ -2501,10 +2572,8 @@ else:
                     if marca_sel:
                         parametro_conteo = marca_sel
                         productos_a_contar = df_activos[df_activos['Marca'] == marca_sel].copy()
-
-                # -------------------------------------------------------------
-                # 2. OPCIÓN MUESTREO AL AZAR
-                # -------------------------------------------------------------
+        
+                # --- OPCIÓN B: MUESTREO AL AZAR ---
                 else:
                     cant_items = st.number_input(
                         "Cantidad de artículos al azar:", 
@@ -2520,10 +2589,8 @@ else:
                         
                     if "muestra_azar" in st.session_state:
                         productos_a_contar = st.session_state.muestra_azar
-
-                # -------------------------------------------------------------
-                # 3. FORMULARIO DE RECUENTO
-                # -------------------------------------------------------------
+        
+                # --- FORMULARIO DE RECUENTO FÍSICO ---
                 if not productos_a_contar.empty:
                     st.info(f"Mostrando **{len(productos_a_contar)}** productos para la recolección física.")
                     
@@ -2550,23 +2617,22 @@ else:
                             st.markdown("---")
                             
                         if st.form_submit_button("📩 Finalizar y Enviar Recuento", type="primary"):
-                            if not vendedor_nombre:
-                                st.error("Por favor ingrese el nombre antes de enviar.")
+                            if not vendedor_nombre.strip():
+                                st.error("Por favor ingrese el nombre del auditor/vendedor antes de enviar.")
                             else:
                                 try:
-                                    # 1. Consultar Stock_Actual y Precio_Costo en tiempo real
+                                    # 1. Consultar Stock actual y Precio de costo en tiempo real desde Supabase
                                     ids_prod = list(conteos_usuario.keys())
                                     res_prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Precio_Costo").in_("ID_Producto", ids_prod).execute().data
                                     df_live = pd.DataFrame(res_prods)
                                     
-                                    # Mapeos rápidos para cálculo
                                     stock_map = dict(zip(df_live['ID_Producto'].astype(str), df_live['Stock_Actual']))
                                     costo_map = dict(zip(df_live['ID_Producto'].astype(str), df_live['Precio_Costo']))
-
-                                    # 2. Calcular Impacto Financiero Total Estimado
+        
+                                    # 2. Calcular Impacto Financiero y preparar el detalle
                                     impacto_financiero_total = 0.0
                                     detalles_insertar_temp = []
-
+        
                                     for prod_id, cont_cant in conteos_usuario.items():
                                         stock_snap = float(stock_map.get(str(prod_id), 0) or 0)
                                         costo_unitario = float(costo_map.get(str(prod_id), 0) or 0)
@@ -2574,7 +2640,7 @@ else:
                                         dif = float(cont_cant) - stock_snap
                                         impacto_item = dif * costo_unitario
                                         impacto_financiero_total += impacto_item
-
+        
                                         detalles_insertar_temp.append({
                                             "id_producto": str(prod_id),
                                             "stock_sistema_snap": stock_snap,
@@ -2582,47 +2648,47 @@ else:
                                             "diferencia": dif,
                                             "estado_item": "PENDIENTE"
                                         })
-
-                                    # 3. Insertar Cabecera (INCLUYENDO impactofinanciero)
+        
+                                    # 3. Insertar Registro Cabecera
                                     res_cabecera = db.table("INVENTARIOS_CABECERA").insert({
                                         "tipo": "MARCA" if modo_conteo == "Por Marca" else "AZAR",
                                         "parametro": parametro_conteo,
-                                        "vendedor": vendedor_nombre,
+                                        "vendedor": vendedor_nombre.strip(),
                                         "estado": "ENVIADO",
                                         "impactofinanciero": round(impacto_financiero_total, 2)
                                     }).execute()
                                     
                                     id_inv = res_cabecera.data[0]['id']
-
-                                    # 4. Asignar inventario_id a los detalles e Insertar
+        
+                                    # 4. Asignar inventario_id e Insertar Detalles
                                     for det in detalles_insertar_temp:
                                         det["inventario_id"] = id_inv
-
+        
                                     db.table("INVENTARIOS_DETALLE").insert(detalles_insertar_temp).execute()
-
-                                    # -------------------------------------------------------------
-                                    # 🧹 RESETEO POST-ENVÍO
-                                    # -------------------------------------------------------------
+        
+                                    # 5. Limpieza de variables temporales de la sesión
                                     for prod_id in conteos_usuario.keys():
                                         key_input = f"inv_in_{prod_id}"
                                         if key_input in st.session_state:
                                             del st.session_state[key_input]
-
+        
                                     if "muestra_azar" in st.session_state:
                                         del st.session_state["muestra_azar"]
-
+        
                                     st.session_state["reset_inventario"] = True
-
-                                    st.success(f"✅ Recuento enviado. Impacto estimado: ${impacto_financiero_total:,.2f}")
+        
+                                    st.success(f"✅ Recuento enviado con éxito. Impacto estimado: ${impacto_financiero_total:,.2f}")
                                     st.rerun()
-
+        
                                 except Exception as e:
                                     st.error(f"Error al enviar recuento: {e}")
-
-            # --- VISTA 2: ADMIN AUDITORÍA ---
-            if st.session_state.rol == "Administrador" and subtab_admin:
-                with subtab_admin:
-                    st.caption("Supervisión, detección de inconsistencias y aplicación de diferencias.")
+        
+            # =============================================================
+            # VISTA 2: ADMIN (AUDITORÍA Y AJUSTES)
+            # =============================================================
+            if st.session_state.rol == "Administrador" and tab_admin:
+                with tab_admin:
+                    st.caption("Supervisión, detección de inconsistencias y aplicación de diferencias de stock.")
                     
                     cabeceras_data = db.table("INVENTARIOS_CABECERA").select("*").eq("estado", "ENVIADO").order("created_at", desc=True).execute().data
                     
@@ -2631,7 +2697,6 @@ else:
                     else:
                         df_cabeceras = pd.DataFrame(cabeceras_data)
                         
-                        # Formato de opción agregando el impacto financiero guardado en BD
                         opciones_inv = [
                             f"ID #{r['id']} - {r['vendedor']} ({r['parametro']}) - Impacto Est.: ${float(r.get('impactofinanciero') or 0):,.2f} - {str(r['created_at'])[:10]}" 
                             for _, r in df_cabeceras.iterrows()
@@ -2644,8 +2709,9 @@ else:
                             
                             if detalle_data:
                                 df_det = pd.DataFrame(detalle_data)
-                                ids_det = df_det['id_producto'].tolist()
+                                ids_det = df_det['id_producto'].astype(str).tolist()
                                 
+                                # Obtener información actual de los productos
                                 df_prods_info = pd.DataFrame(
                                     db.table("PRODUCTOS")
                                     .select("ID_Producto, Nombre, Precio_Costo, Stock_Actual")
@@ -2653,130 +2719,148 @@ else:
                                     .execute().data
                                 )
                                 
-                                df_prods_info['ID_Producto'] = df_prods_info['ID_Producto'].astype(str)
-                                df_det['id_producto'] = df_det['id_producto'].astype(str)
-                                
-                                df_merged = pd.merge(df_det, df_prods_info, left_on="id_producto", right_on="ID_Producto", suffixes=('', '_actual'))
-                                
-                                total_dif = df_merged['diferencia'].sum()
-                                impacto_dinero = (df_merged['diferencia'] * df_merged['Precio_Costo'].fillna(0)).sum()
-                                
-                                m1, m2 = st.columns(2)
-                                m1.metric("Diferencia Total (Unidades)", f"{total_dif:.0f}")
-                                m2.metric("Impacto Financiero Estimado", f"${impacto_dinero:,.2f}", delta_color="inverse")
-                                
-                                st.markdown("---")
-                                
-                                for idx, item in df_merged.iterrows():
-                                    dif = item['diferencia']
-                                    if dif == 0:
-                                        color_status = "🟢 COINCIDE"
-                                        border = False
-                                    elif dif < 0:
-                                        color_status = f"🔴 FALTANTE ({dif:.0f})"
-                                        border = True
-                                    else:
-                                        color_status = f"🟡 SOBRANTE (+{dif:.0f})"
-                                        border = True
-                                        
-                                    with st.container(border=border):
-                                        # Ajustamos proporciones de columnas para dar espacio al input del Admin
-                                        c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 2])
-                                        c1.write(f"**{item['Nombre']}** (`{item['id_producto']}`)")
-                                        c2.write(f"Snap: **{item['stock_sistema_snap']}**")
-                                        c3.write(f"Contado: **{item['stock_contado']}**")
-                                        
-                                        # Campo para que el Admin ingrese / modifique el valor si la realidad difiere
-                                        valor_admin = c4.number_input(
-                                            "Re-conteo Admin", 
-                                            min_value=0, 
-                                            value=int(item['stock_contado']), 
-                                            key=f"input_admin_stk_{item['id']}",
-                                            label_visibility="collapsed"
-                                        )
-                                        
-                                        c5.write(f"Estado: **{color_status}**")
-                                        
-                                        with c6:
-                                            if item['estado_item'] == 'PENDIENTE':
-                                                if st.button("✔️ Aplicar Ajuste", key=f"btn_aj_{item['id']}"):
-                                                    try:
-                                                        # 1. Asegurar tipo text estricto para la clave
-                                                        id_prod_str = str(item['id_producto']).strip()
-                                                        
-                                                        # 2. Consultar el stock actual previo en la BD para el log
-                                                        p_actual = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_prod_str).execute().data
-                                                        stock_previo = float(p_actual[0]['Stock_Actual'] or 0) if p_actual else 0.0
-                                                        
-                                                        # 3. El valor ingresado por el Admin PISA directamente el stock
-                                                        nuevo_stock_int = int(valor_admin)
-                                                        
-                                                        # 4. Actualizar tabla PRODUCTOS con el valor corregido
-                                                        db.table("PRODUCTOS").update({
-                                                            "Stock_Actual": nuevo_stock_int
-                                                        }).eq("ID_Producto", id_prod_str).execute()
-                                                        
-                                                        # 5. Actualizar estado en INVENTARIOS_DETALLE
-                                                        id_detalle_int = int(item['id'])
-                                                        db.table("INVENTARIOS_DETALLE").update({
-                                                            "estado_item": "AJUSTADO"
-                                                        }).eq("id", id_detalle_int).execute()
-                                                        
-                                                        # 6. Auditoría
-                                                        if 'log_auditoria' in globals():
-                                                            log_auditoria(
-                                                                tabla="PRODUCTOS",
-                                                                accion="UPDATE",
-                                                                id_entidad=id_prod_str,
-                                                                detalles={
-                                                                    "operacion": "Ajuste Directo Conteo Admin",
-                                                                    "conteo_vendedor": float(item['stock_contado']),
-                                                                    "stock_anterior": stock_previo,
-                                                                    "nuevo_stock": nuevo_stock_int
-                                                                },
-                                                                usuario=st.session_state.get('usuario_actual', 'Admin')
-                                                            )
-                                                        
-                                                        st.success(f"✅ ¡Stock Fijado! {int(stock_previo)} ➔ {nuevo_stock_int}")
-                                                        st.rerun()
-                                                        
-                                                    except Exception as e:
-                                                        st.error(f"Error al aplicar ajuste: {e}")
-                                            elif item['estado_item'] == 'AJUSTADO':
-                                                st.caption("✅ Ajustado")
-                                            else:
-                                                st.caption("Sin diferencia")
-            
-                                st.markdown("---")
-                                
-                                # -------------------------------------------------------------
-                                # BOTONES INFERIORES: ARCHIVAR O ELIMINAR
-                                # -------------------------------------------------------------
-                                col_accion1, col_accion2 = st.columns(2)
-            
-                                with col_accion1:
-                                    if st.button("🏁 Finalizar y Archivar Auditoría", type="primary", use_container_width=True, key="btn_cerrar_inv"):
-                                        db.table("INVENTARIOS_CABECERA").update({"estado": "REVISADO"}).eq("id", id_cabecera).execute()
-                                        st.success("✅ Inventario cerrado correctamente.")
-                                        st.rerun()
-            
-                                with col_accion2:
-                                    with st.popover("🗑️ Eliminar Auditoría", use_container_width=True):
-                                        st.warning("⚠️ **¿Está seguro de eliminar este recuento?**")
-                                        st.caption("Esta acción borrará permanentemente la cabecera y sus detalles.")
-                                        
-                                        if st.button("💥 Confirmar y Borrar", type="primary", use_container_width=True, key="btn_del_inv_confirm"):
-                                            try:
-                                                # 1. Borrar detalle
-                                                db.table("INVENTARIOS_DETALLE").delete().eq("inventario_id", id_cabecera).execute()
-                                                
-                                                # 2. Borrar cabecera
-                                                db.table("INVENTARIOS_CABECERA").delete().eq("id", id_cabecera).execute()
-                                                
-                                                st.success("🗑️ Recuento eliminado exitosamente.")
-                                                st.rerun()
-                                            except Exception as e:
-                                                st.error(f"Error al eliminar la auditoría: {e}")
+                                if not df_prods_info.empty:
+                                    df_prods_info['ID_Producto'] = df_prods_info['ID_Producto'].astype(str)
+                                    df_det['id_producto'] = df_det['id_producto'].astype(str)
+                                    
+                                    df_merged = pd.merge(df_det, df_prods_info, left_on="id_producto", right_on="ID_Producto", suffixes=('', '_actual'))
+                                    
+                                    total_dif = df_merged['diferencia'].sum()
+                                    impacto_dinero = (df_merged['diferencia'] * df_merged['Precio_Costo'].fillna(0)).sum()
+                                    
+                                    m1, m2 = st.columns(2)
+                                    m1.metric("Diferencia Total (Unidades)", f"{total_dif:.0f}")
+                                    m2.metric("Impacto Financiero Estimado", f"${impacto_dinero:,.2f}", delta_color="inverse")
+                                    
+                                    st.markdown("---")
+                                    
+                                    # RENDERIZAR ARTÍCULOS PARA REVISIÓN
+                                    for idx, item in df_merged.iterrows():
+                                        dif = item['diferencia']
+                                        if dif == 0:
+                                            color_status = "🟢 COINCIDE"
+                                            border = False
+                                        elif dif < 0:
+                                            color_status = f"🔴 FALTANTE ({dif:.0f})"
+                                            border = True
+                                        else:
+                                            color_status = f"🟡 SOBRANTE (+{dif:.0f})"
+                                            border = True
+                                            
+                                        with st.container(border=border):
+                                            c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 2])
+                                            c1.write(f"**{item['Nombre']}** (`{item['id_producto']}`)")
+                                            c2.write(f"Snap: **{item['stock_sistema_snap']}**")
+                                            c3.write(f"Contado: **{item['stock_contado']}**")
+                                            
+                                            valor_admin = c4.number_input(
+                                                "Re-conteo Admin", 
+                                                min_value=0, 
+                                                value=int(item['stock_contado']), 
+                                                key=f"input_admin_stk_{item['id']}",
+                                                label_visibility="collapsed"
+                                            )
+                                            
+                                            c5.write(f"Estado: **{color_status}**")
+                                            
+                                            with c6:
+                                                if item['estado_item'] == 'PENDIENTE':
+                                                    if st.button("✔️ Aplicar Ajuste", key=f"btn_aj_{item['id']}"):
+                                                        try:
+                                                            id_prod_str = str(item['id_producto']).strip()
+                                                            nombre_prod_str = str(item['Nombre']).strip()
+                                                            usuario_actual = st.session_state.get('usuario_actual', 'Admin')
+                                                            
+                                                            # 1. Consultar stock actual previo
+                                                            p_actual = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_prod_str).execute().data
+                                                            stock_previo = float(p_actual[0]['Stock_Actual'] or 0) if p_actual else 0.0
+                                                            
+                                                            nuevo_stock_int = int(valor_admin)
+                                                            diferencia_real = nuevo_stock_int - stock_previo
+                                                            
+                                                            # 2. Actualizar stock final en la tabla PRODUCTOS
+                                                            db.table("PRODUCTOS").update({
+                                                                "Stock_Actual": nuevo_stock_int
+                                                            }).eq("ID_Producto", id_prod_str).execute()
+                                                            
+                                                            # 3. Marcar ítem del inventario como ajustado
+                                                            db.table("INVENTARIOS_DETALLE").update({
+                                                                "estado_item": "AJUSTADO"
+                                                            }).eq("id", int(item['id'])).execute()
+                                                            
+                                                            # 4. REGISTRAR MOVIMIENTO EN LA TABLA MOVIMIENTOS_STOCK (KARDEX)
+                                                            if diferencia_real > 0:
+                                                                tipo_mov = "AJUSTE INVENTARIO (ENTRADA)"
+                                                            elif diferencia_real < 0:
+                                                                tipo_mov = "AJUSTE INVENTARIO (SALIDA)"
+                                                            else:
+                                                                tipo_mov = "AJUSTE INVENTARIO (SIN CAMBIO)"
+                                                            
+                                                            db.table("MOVIMIENTOS_STOCK").insert({
+                                                                "id_producto": id_prod_str,
+                                                                "nombre_producto": nombre_prod_str,
+                                                                "tipo_movimiento": tipo_mov,
+                                                                "cantidad": int(abs(diferencia_real)),
+                                                                "stock_anterior": float(stock_previo),
+                                                                "stock_nuevo": float(nuevo_stock_int),
+                                                                "origen_referencia": f"Ajuste por Inventario (ID Cabecera: {id_cabecera})",
+                                                                "usuario": str(usuario_actual)
+                                                            }).execute()
+                                                            
+                                                            # 5. Registrar auditoría general (si la función existe)
+                                                            if 'log_auditoria' in globals():
+                                                                log_auditoria(
+                                                                    tabla="PRODUCTOS",
+                                                                    accion="UPDATE",
+                                                                    id_entidad=id_prod_str,
+                                                                    detalles={
+                                                                        "operacion": "Ajuste Directo Conteo Admin",
+                                                                        "conteo_vendedor": float(item['stock_contado']),
+                                                                        "stock_anterior": stock_previo,
+                                                                        "nuevo_stock": nuevo_stock_int,
+                                                                        "diferencia": diferencia_real
+                                                                    },
+                                                                    usuario=usuario_actual
+                                                                )
+                                                            
+                                                            st.success(f"✅ Stock fijado: {int(stock_previo)} ➔ {nuevo_stock_int} (Kardex registrado)")
+                                                            st.rerun()
+                                                            
+                                                        except Exception as e:
+                                                            st.error(f"Error al aplicar ajuste y registrar movimiento: {e}")
+                                                elif item['estado_item'] == 'AJUSTADO':
+                                                    st.caption("✅ Ajustado")
+                                                else:
+                                                    st.caption("Sin diferencia")
+                                    
+                                    st.markdown("---")
+                                    
+                                    # --- BOTONES DE ACCIÓN GLOBAL DE AUDITORÍA ---
+                                    col_accion1, col_accion2 = st.columns(2)
+                                    
+                                    with col_accion1:
+                                        if st.button("🏁 Finalizar y Archivar Auditoría", type="primary", use_container_width=True, key="btn_cerrar_inv"):
+                                            db.table("INVENTARIOS_CABECERA").update({"estado": "REVISADO"}).eq("id", id_cabecera).execute()
+                                            st.success("✅ Inventario cerrado correctamente.")
+                                            st.rerun()
+                                            
+                                    with col_accion2:
+                                        with st.popover("🗑️ Eliminar Auditoría", use_container_width=True):
+                                            st.warning("⚠️ **¿Está seguro de eliminar este recuento?**")
+                                            st.caption("Esta acción borrará permanentemente la cabecera y sus detalles.")
+                                            
+                                            if st.button("💥 Confirmar y Borrar", type="primary", use_container_width=True, key="btn_del_inv_confirm"):
+                                                try:
+                                                    # 1. Borrar detalle
+                                                    db.table("INVENTARIOS_DETALLE").delete().eq("inventario_id", id_cabecera).execute()
+                                                    
+                                                    # 2. Borrar cabecera
+                                                    db.table("INVENTARIOS_CABECERA").delete().eq("id", id_cabecera).execute()
+                                                    
+                                                    st.success("🗑️ Registro de inventario eliminado.")
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(f"Error al eliminar auditoría: {e}")
     
         # --- PESTAÑAS DE ADMINISTRADOR ---
         if st.session_state.rol == "Administrador":
@@ -2840,7 +2924,7 @@ else:
             # --- PESTAÑA MODIFICAR ---
             with tab_modificar:
                 st.subheader("✏️ Modificar Producto Completo")
-
+            
                 # --- BOTÓN DE MANTENIMIENTO DE ESTADOS ---
                 with st.expander("⚙️ Herramientas de Mantenimiento"):
                     st.caption("Inactiva productos sin stock y con Stock Mínimo en 0/NULL. Reactiva los que recuperen stock.")
@@ -2858,7 +2942,7 @@ else:
                         if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
                             return default
                         return float(val) if is_float else int(float(val))
-            
+                    
                     if prod_sel:
                         id_sel = prod_sel.split(" - ")[0]
                         fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
@@ -2900,20 +2984,23 @@ else:
                                     if val is None or val == "" or str(val).lower() == "none":
                                         return None
                                     return str(val)
-    
+                    
                                 def clean_num(val, is_float=False):
                                     try:
                                         if val in [None, '', 'None']: return 0.0 if is_float else 0
                                         return float(val) if is_float else int(val)
                                     except:
                                         return 0.0 if is_float else 0
-    
+                    
+                                stock_nuevo = clean_num(n_stk)
+                                nombre_producto_nuevo = str(n_nom) if n_nom else "Sin nombre"
+            
                                 datos_update = {
-                                    "Nombre": str(n_nom) if n_nom else "Sin nombre",
+                                    "Nombre": nombre_producto_nuevo,
                                     "Rubro": clean_text(n_rub),
                                     "Marca": clean_text(n_mar),
                                     "ID_Proveedor": clean_num(n_prov),
-                                    "Stock_Actual": clean_num(n_stk),
+                                    "Stock_Actual": stock_nuevo,
                                     "Stock_Min": clean_num(n_min),
                                     "Stock_Max": clean_num(n_max),
                                     "Imagen": clean_text(n_img),
@@ -2926,8 +3013,28 @@ else:
                                 }
                                 
                                 try:
+                                    # 1. Actualización del producto
                                     db.table("PRODUCTOS").update(datos_update).eq("ID_Producto", id_sel).execute()
                                     
+                                    # 2. Obtenemos el nombre del usuario activo
+                                    usuario_activo = st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Martin')
+            
+                                    # 3. VERIFICAMOS Y REGISTRAMOS CAMBIO EN STOCK (KARDEX)
+                                    diferencia_stock = stock_nuevo - val_stk
+                                    if diferencia_stock != 0:
+                                        tipo_mov = "AJUSTE POSITIVO" if diferencia_stock > 0 else "AJUSTE NEGATIVO"
+                                        db.table("MOVIMIENTOS_STOCK").insert({
+                                            "id_producto": str(id_sel),
+                                            "nombre_producto": nombre_producto_nuevo,
+                                            "tipo_movimiento": tipo_mov,
+                                            "cantidad": diferencia_stock,  # Puede ser positivo o negativo
+                                            "stock_anterior": int(val_stk),
+                                            "stock_nuevo": int(stock_nuevo),
+                                            "origen_referencia": "Ajuste Manual en Edición de Producto",
+                                            "usuario": str(usuario_activo)
+                                        }).execute()
+            
+                                    # 4. Log de Auditoría
                                     log_auditoria(
                                         tabla="PRODUCTOS",
                                         accion="UPDATE",
@@ -2936,9 +3043,9 @@ else:
                                             "motivo": "Modificación manual desde formulario de edición",
                                             "valores_finales": datos_update
                                         },
-                                        usuario=st.session_state.get('usuario_actual', 'Martin')
+                                        usuario=usuario_activo
                                     )
-    
+                    
                                     st.success("¡Producto actualizado exitosamente!")
                                     if 'df_prod' in st.session_state: del st.session_state['df_prod']
                                     st.rerun()
@@ -2991,175 +3098,81 @@ else:
             # --- PESTAÑA HISTÓRICO DE MOVIMIENTOS (KARDEX) (Solo Administrador) ---
             # =====================================================================
             with tab_historico:
-                st.subheader("📜 Histórico de Movimientos por Producto (Kardex)")
+                st.subheader("📜 Histórico de Movimientos de Inventario (Kardex)")
                 
-                # 1. Buscador de producto
-                opciones_kardex = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
-                prod_kardex_sel = st.selectbox("Seleccionar producto para auditoría:", [""] + opciones_kardex, key="kardex_prod_sel")
+                # 1. Buscador opcional de producto
+                if 'df_prod' in st.session_state and not st.session_state.df_prod.empty:
+                    opciones_kardex = (
+                        st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']
+                    ).tolist()
+                else:
+                    opciones_kardex = []
+                    
+                prod_kardex_sel = st.selectbox(
+                    "Filtrar por Producto (Dejar en 'Todos' para auditoría general):", 
+                    ["Todos los Productos"] + opciones_kardex, 
+                    key="kardex_prod_sel"
+                )
                 
                 # 2. Filtro Rango de Fechas
                 col_f1, col_f2 = st.columns(2)
                 fecha_desde = col_f1.date_input("Fecha Desde:", value=datetime.now() - timedelta(days=30))
                 fecha_hasta = col_f2.date_input("Fecha Hasta:", value=datetime.now())
-                
-                if prod_kardex_sel:
-                    id_kardex = prod_kardex_sel.split(" - ")[0]
-                    str_f_desde = datetime.combine(fecha_desde, datetime.min.time()).isoformat()
-                    str_f_hasta = datetime.combine(fecha_hasta, datetime.max.time()).isoformat()
-                    
-                    # Obtener el stock actual del producto seleccionado (Usando Stock_Actual)
-                    prod_row = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == str(id_kardex)]
-                    stock_actual = int(prod_row['Stock_Actual'].values[0]) if not prod_row.empty else 0
-                    
-                    with st.spinner("Consultando historial unificado..."):
-                        movimientos = []
-                        
-                        # A. Consultar VENTAS
-                        try:
-                            res_v = db.table("VENTAS_DETALLE").select("*, VENTAS_CABECERA(Fecha, Estado, ID_Venta)")\
-                                .eq("ID_Producto", id_kardex).execute().data
-                            
-                            for v in res_v:
-                                cabecera = v.get("VENTAS_CABECERA") or {}
-                                f_v = cabecera.get("Fecha")
-                                if f_v and str_f_desde <= f_v <= str_f_hasta and cabecera.get("Estado") != "CANCELADO":
-                                    cant = int(v.get("Cantidad", 0))
-                                    movimientos.append({
-                                        "Fecha_raw": f_v,
-                                        "Concepto": "🛒 VENTA",
-                                        "ID Referencia": f"ID_Venta: {cabecera.get('ID_Venta', 'S/I')}",
-                                        "Variación": -cant,
-                                        "Detalle / Observaciones": f"Venta realizada ({cant} un.)"
-                                    })
-                        except Exception as e_v:
-                            st.warning(f"Nota sobre Ventas: {e_v}")
-    
-                        # B. Consultar COMPRAS (Nombres exactos: DETALLE_COMPRAS y COMPRAS_CABECERA)
-                        try:
-                            id_prod_query = int(id_kardex) if str(id_kardex).isdigit() else str(id_kardex)
-                            
-                            # 1. Obtener detalles del producto
-                            res_c = db.table("DETALLE_COMPRAS").select("*").eq("ID_Producto", id_prod_query).execute().data
-                            
-                            if res_c:
-                                # Obtener IDs de compras únicos
-                                ids_compras = list(set([c.get("ID_Compra") for c in res_c if c.get("ID_Compra") is not None]))
-                                
-                                # 2. Obtener fechas de COMPRAS_CABECERA
-                                cabeceras_dict = {}
-                                if ids_compras:
-                                    res_cab = db.table("COMPRAS_CABECERA").select("ID_Compra, Fecha").in_("ID_Compra", ids_compras).execute().data
-                                    cabeceras_dict = {cab["ID_Compra"]: cab for cab in res_cab if "ID_Compra" in cab}
-                    
-                                # 3. Unir movimientos
-                                for c in res_c:
-                                    id_compra = c.get("ID_Compra")
-                                    cabecera = cabeceras_dict.get(id_compra, {})
-                                    f_c = cabecera.get("Fecha") or c.get("Fecha")
-                                    f_c_date = str(f_c)[:10] if f_c else ""
-                                    
-                                    # Filtrar por rango de fechas seleccionado
-                                    if f_c and str_f_desde <= f_c_date <= str_f_hasta:
-                                        cant = int(c.get("Cantidad", 0))
-                                        movimientos.append({
-                                            "Fecha_raw": f_c,
-                                            "Concepto": "🚚 COMPRA",
-                                            "ID Referencia": f"ID_Compra: {id_compra if id_compra else 'S/I'}",
-                                            "Variación": +cant,
-                                            "Detalle / Observaciones": f"Ingreso por compra al proveedor"
-                                        })
-                        except Exception as e_c:
-                            st.error(f"Error al consultar Compras: {e_c}")
-    
-                        # C. Consultar CAMBIOS / DEVOLUCIONES / DIVISOR
-                        try:
-                            res_cam = db.table("CAMBIOS").select("*").eq("Código", id_kardex)\
-                                .gte("Fecha", str_f_desde).lte("Fecha", str_f_hasta).execute().data
-                            
-                            for cam in res_cam:
-                                entra = int(cam.get("Entra", 0))
-                                sale = int(cam.get("Sale", 0))
-                                var = entra - sale
-                                movimientos.append({
-                                    "Fecha_raw": cam.get("Fecha"),
-                                    "Concepto": "🔄 CAMBIO / AJUSTE",
-                                    "ID Referencia": f"ID_Cambio: {cam.get('id', 'S/I')}",
-                                    "Variación": var,
-                                    "Detalle / Observaciones": f"{cam.get('Descripción', '')} (Usuario: {cam.get('Usuario', 'S/D')})"
-                                })
-                        except Exception as e_cam:
-                            pass
-    
-                        # D. Consultar LOGS DE AUDITORÍA
-                        try:
-                            res_aud = db.table("LOGS_AUDITORIA").select("*").eq("id_entidad", str(id_kardex))\
-                                .gte("fecha_hora", str_f_desde).lte("fecha_hora", str_f_hasta).execute().data
-                            
-                            for aud in res_aud:
-                                movimientos.append({
-                                    "Fecha_raw": aud.get("fecha_hora"),
-                                    "Concepto": "🛠️ AUDITORÍA MANUAL",
-                                    "ID Referencia": f"ID_Log: {aud.get('id', 'S/I')}",
-                                    "Variación": 0,
-                                    "Detalle / Observaciones": f"Acción: {aud.get('accion')} | User: {aud.get('usuario')}"
-                                })
-                        except Exception as e_aud:
-                            pass
-    
-                        # Renderizar resultados con trazabilidad de stock
-                        if movimientos:
-                            df_kardex = pd.DataFrame(movimientos)
-                            
-                            # Conversión segura de fechas heterogéneas
-                            df_kardex["Fecha_datetime"] = pd.to_datetime(
-                                df_kardex["Fecha_raw"], 
-                                format='mixed', 
-                                utc=True, 
-                                errors='coerce'
+            
+                str_f_desde = datetime.combine(fecha_desde, datetime.min.time()).isoformat()
+                str_f_hasta = datetime.combine(fecha_hasta, datetime.max.time()).isoformat()
+            
+                with st.spinner("Cargando movimientos de stock desde la base de datos..."):
+                    try:
+                        # Consulta a la tabla MOVIMIENTOS_STOCK
+                        query = db.table("MOVIMIENTOS_STOCK").select("*")\
+                            .gte("fecha", str_f_desde)\
+                            .lte("fecha", str_f_hasta)
+            
+                        # Filtro opcional por producto
+                        if prod_kardex_sel != "Todos los Productos":
+                            id_kardex = prod_kardex_sel.split(" - ")[0]
+                            query = query.eq("id_producto", str(id_kardex))
+            
+                        # Ordenar por fecha descendente
+                        res_mov = query.order("fecha", desc=True).execute().data
+            
+                        if res_mov:
+                            df_kardex = pd.DataFrame(res_mov)
+            
+                            # Formatear la columna 'fecha' a solo día/mes/año
+                            df_kardex["Fecha_Corta"] = pd.to_datetime(
+                                df_kardex["fecha"], errors='coerce'
+                            ).dt.strftime("%d/%m/%Y")
+            
+                            # Mapeo y orden exacto de columnas solicitado:
+                            # Fecha | ID Producto | Producto | Cantidad | Tipo Movimiento | Stock Ant. | Stock Nuevo | Origen / Referencia | Usuario
+                            columnas_mostrar = {
+                                "Fecha_Corta": "Fecha",
+                                "id_producto": "ID Producto",
+                                "nombre_producto": "Producto",
+                                "cantidad": "Cantidad",
+                                "tipo_movimiento": "Tipo Movimiento",
+                                "stock_anterior": "Stock Ant.",
+                                "stock_nuevo": "Stock Nuevo",
+                                "origen_referencia": "Origen / Referencia",
+                                "usuario": "Usuario"
+                            }
+            
+                            # Seleccionar solo las columnas en el orden estricto
+                            cols_existentes = {k: v for k, v in columnas_mostrar.items() if k in df_kardex.columns}
+                            df_vista = df_kardex[list(cols_existentes.keys())].rename(columns=cols_existentes)
+            
+                            st.dataframe(
+                                df_vista, 
+                                use_container_width=True, 
+                                hide_index=True
                             )
-                            
-                            # Eliminar registros con fechas inválidas si los hubiera y ordenar desc
-                            df_kardex = df_kardex.dropna(subset=["Fecha_datetime"])
-                            df_kardex = df_kardex.sort_values(by="Fecha_datetime", ascending=False).reset_index(drop=True)
-                            
-                            # Reconstrucción trazable de Stock Anterior y Nuevo Stock hacia atrás
-                            stock_cursor = stock_actual
-                            stock_anterior_list = []
-                            nuevo_stock_list = []
-                            
-                            for _, row in df_kardex.iterrows():
-                                var = row["Variación"]
-                                nuevo_stk = stock_cursor
-                                stk_ant = nuevo_stk - var
-                                
-                                nuevo_stock_list.append(nuevo_stk)
-                                stock_anterior_list.append(stk_ant)
-                                
-                                stock_cursor = stk_ant
-                            
-                            df_kardex["Stock Anterior"] = stock_anterior_list
-                            df_kardex["Nuevo Stock"] = nuevo_stock_list
-                            df_kardex["Fecha"] = df_kardex["Fecha_datetime"].dt.strftime("%d/%m/%Y %H:%M")
-                            
-                            # Reordenar columnas para la vista final
-                            columnas_ordenadas = [
-                                "Fecha", "Concepto", "ID Referencia", 
-                                "Stock Anterior", "Variación", "Nuevo Stock", 
-                                "Detalle / Observaciones"
-                            ]
-                            df_kardex = df_kardex[columnas_ordenadas]
-                            
-                            # Métricas resumidas
-                            col_m1, col_m2 = st.columns(2)
-                            total_entradas = df_kardex[df_kardex["Variación"] > 0]["Variación"].sum()
-                            total_salidas = abs(df_kardex[df_kardex["Variación"] < 0]["Variación"].sum())
-                            
-                            col_m1.metric("📥 Total Ingresos/Entradas", f"+{total_entradas} un.")
-                            col_m2.metric("📤 Total Salidas/Egresos", f"-{total_salidas} un.")
-                            
-                            st.dataframe(df_kardex, use_container_width=True, hide_index=True)
                         else:
-                            st.info("No se encontraron movimientos registrados para este producto en el rango de fechas seleccionado.")
+                            st.info("ℹ️ No se registraron movimientos de stock para los criterios de búsqueda seleccionados.")
+            
+                    except Exception as e:
+                        st.error(f"Error al obtener el historial de movimientos de stock: {e}")
     
     # =====================================================================
     # MODULO: 📦 STOCK
@@ -3779,17 +3792,22 @@ else:
                 
                 if es_valido:
                     id_c = f"COM-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    usuario_logueado = st.session_state.get("usuario_actual", "Admin")
                     
                     # 1. Guardar Cabecera de Compra
                     db.table("COMPRAS_CABECERA").insert({
-                        "ID_Compra": id_c, "Fecha": str(fecha_factura), "Proveedor": prov_sel, 
-                        "Nro_Factura": nro_fact, "Metodo_Pago": pago_compra, "Total_Compra": float(total_final)
+                        "ID_Compra": id_c, 
+                        "Fecha": str(fecha_factura), 
+                        "Proveedor": prov_sel, 
+                        "Nro_Factura": nro_fact, 
+                        "Metodo_Pago": pago_compra, 
+                        "Total_Compra": float(total_final)
                     }).execute()
                     
-                    # 2. Guardar Detalle y Actualizar Stock Y PRECIOS
+                    # 2. Guardar Detalle, Actualizar Stock, Precios y registrar KARDEX
                     for item in st.session_state.carrito_compra:
-                        # A. Actualizar Stock, Costo y Precios (1 al 5) en la tabla PRODUCTOS
-                        # Solo si el producto es stockeable, o siempre si quieres que los precios siempre se actualicen:
+                        id_p_str = str(item['id'])
+                        cant_comprada = int(item['cantidad'])
                         
                         data_update = {
                             "Precio_Costo": float(item['costo']),
@@ -3800,38 +3818,62 @@ else:
                             "Precio_5": float(item.get('Precio_5', 0))
                         }
                         
-                        # Si además quieres actualizar el stock:
-                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
-                        if not prod_info.empty and prod_info.iloc[0].get('Es_Stockeable') == True:
-                            data_update["Stock_Actual"] = int(prod_info.iloc[0]['Stock_Actual']) + int(item['cantidad'])
+                        # Obtener datos del producto desde df_prod
+                        prod_info = df_prod[df_prod['ID_Producto'].astype(str) == id_p_str]
+                        
+                        es_stockeable = False
+                        stock_anterior = 0
+                        stock_nuevo = 0
+                        nombre_producto = item.get('nombre', '')
+            
+                        if not prod_info.empty:
+                            fila_p = prod_info.iloc[0]
+                            es_stockeable = fila_p.get('Es_Stockeable', False) == True
+                            stock_anterior = int(fila_p.get('Stock_Actual', 0) or 0)
+                            if not nombre_producto:
+                                nombre_producto = str(fila_p.get('Nombre', ''))
+            
+                        if es_stockeable:
+                            stock_nuevo = stock_anterior + cant_comprada
+                            data_update["Stock_Actual"] = stock_nuevo
                         
                         # Ejecutamos el update en la tabla PRODUCTOS
-                        db.table("PRODUCTOS").update(data_update).eq("ID_Producto", str(item['id'])).execute()
-
-                        # B. Guardar Detalle (en tu nueva tabla DETALLE_COMPRAS)
+                        db.table("PRODUCTOS").update(data_update).eq("ID_Producto", id_p_str).execute()
+            
+                        # B. Guardar Detalle (en la tabla DETALLE_COMPRAS)
                         db.table("DETALLE_COMPRAS").insert({
                             "ID_Compra": id_c,
-                            "ID_Producto": str(item['id']),
-                            "Cantidad": int(item['cantidad']),
+                            "ID_Producto": id_p_str,
+                            "Cantidad": cant_comprada,
                             "Precio_Costo_Unitario": float(item['costo']),
                             "Subtotal": float(item['subtotal'])
                         }).execute()
-                    
-                    # --- AQUÍ ESTÁ EL CAMBIO CLAVE ---
-                    # Si la orden estaba en edición, la eliminamos de las tablas de Órdenes
+            
+                        # C. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX - ENTRADA POR COMPRA)
+                        # Solo registramos el movimiento de stock si el producto incrementa inventario
+                        if es_stockeable:
+                            db.table("MOVIMIENTOS_STOCK").insert({
+                                "id_producto": id_p_str,
+                                "nombre_producto": str(nombre_producto),
+                                "tipo_movimiento": "COMPRA (ENTRADA)",
+                                "cantidad": cant_comprada,
+                                "stock_anterior": float(stock_anterior),
+                                "stock_nuevo": float(stock_nuevo),
+                                "origen_referencia": f"Ingreso por Compra (ID: {id_c} - Factura: {nro_fact})",
+                                "usuario": str(usuario_logueado)
+                            }).execute()
+            
+                    # --- Limpieza de Órdenes en Edición ---
                     if 'oc_en_edicion' in st.session_state:
                         id_a_borrar = st.session_state.oc_en_edicion
                         db.table("DETALLE_ORDENES").delete().eq("ID_Compra", id_a_borrar).execute()
                         db.table("ORDENES_COMPRA").delete().eq("ID_Compra", id_a_borrar).execute()
-                        
-                        # Limpiamos el estado
                         del st.session_state.oc_en_edicion
-                    # ----------------------------------
                     
-                    st.success("¡Compra registrada y orden procesada correctamente!")
+                    st.success("¡Compra registrada, stock cargado y Kardex actualizado correctamente!")
                     st.session_state.carrito_compra = []
                     st.rerun()
-
+                    
     # =====================================================================
     # MODULO: 👤 VENDEDORES
     # =====================================================================
