@@ -2521,7 +2521,7 @@ else:
         # --- PESTAÑA INVENTARIO (NUEVA) ---
         with tab_inventario:
             st.subheader("📋 Módulo de Toma de Inventarios")
-        
+            
             # -------------------------------------------------------------
             # CONFIGURACIÓN DE PESTAÑAS SEGÚN ROL
             # -------------------------------------------------------------
@@ -2530,7 +2530,7 @@ else:
             else:
                 tab_vendedor = st.container()
                 tab_admin = None
-        
+            
             # =============================================================
             # VISTA 1: VENDEDOR (TOMA DE RECUENTO)
             # =============================================================
@@ -2556,7 +2556,7 @@ else:
                 if st.session_state.get("reset_inventario", False):
                     st.session_state["inv_marca_sel"] = None
                     st.session_state["reset_inventario"] = False
-        
+                
                 # --- OPCIÓN A: POR MARCA ---
                 if modo_conteo == "Por Marca":
                     marcas_disp = sorted(df_activos['Marca'].dropna().unique().tolist()) if 'Marca' in df_activos.columns else []
@@ -2572,7 +2572,7 @@ else:
                     if marca_sel:
                         parametro_conteo = marca_sel
                         productos_a_contar = df_activos[df_activos['Marca'] == marca_sel].copy()
-        
+                
                 # --- OPCIÓN B: MUESTREO AL AZAR ---
                 else:
                     cant_items = st.number_input(
@@ -2586,10 +2586,10 @@ else:
                     
                     if st.button("🎲 Generar Muestra Aleatoria", key="btn_generar_azar"):
                         st.session_state.muestra_azar = df_activos.sample(n=int(cant_items)).copy()
-                        
+                    
                     if "muestra_azar" in st.session_state:
                         productos_a_contar = st.session_state.muestra_azar
-        
+                
                 # --- FORMULARIO DE RECUENTO FÍSICO ---
                 if not productos_a_contar.empty:
                     st.info(f"Mostrando **{len(productos_a_contar)}** productos para la recolección física.")
@@ -2628,11 +2628,11 @@ else:
                                     
                                     stock_map = dict(zip(df_live['ID_Producto'].astype(str), df_live['Stock_Actual']))
                                     costo_map = dict(zip(df_live['ID_Producto'].astype(str), df_live['Precio_Costo']))
-        
+                                    
                                     # 2. Calcular Impacto Financiero y preparar el detalle
                                     impacto_financiero_total = 0.0
                                     detalles_insertar_temp = []
-        
+                                    
                                     for prod_id, cont_cant in conteos_usuario.items():
                                         stock_snap = float(stock_map.get(str(prod_id), 0) or 0)
                                         costo_unitario = float(costo_map.get(str(prod_id), 0) or 0)
@@ -2640,15 +2640,18 @@ else:
                                         dif = float(cont_cant) - stock_snap
                                         impacto_item = dif * costo_unitario
                                         impacto_financiero_total += impacto_item
-        
+                                        
+                                        # REGLA: Si no hay diferencia, se marca como SIN_DIFERENCIA automáticamente
+                                        estado_inicial_item = "SIN_DIFERENCIA" if dif == 0 else "PENDIENTE"
+                                        
                                         detalles_insertar_temp.append({
                                             "id_producto": str(prod_id),
                                             "stock_sistema_snap": stock_snap,
                                             "stock_contado": float(cont_cant),
                                             "diferencia": dif,
-                                            "estado_item": "PENDIENTE"
+                                            "estado_item": estado_inicial_item
                                         })
-        
+                                    
                                     # 3. Insertar Registro Cabecera
                                     res_cabecera = db.table("INVENTARIOS_CABECERA").insert({
                                         "tipo": "MARCA" if modo_conteo == "Por Marca" else "AZAR",
@@ -2659,30 +2662,30 @@ else:
                                     }).execute()
                                     
                                     id_inv = res_cabecera.data[0]['id']
-        
+                                    
                                     # 4. Asignar inventario_id e Insertar Detalles
                                     for det in detalles_insertar_temp:
                                         det["inventario_id"] = id_inv
-        
+                                    
                                     db.table("INVENTARIOS_DETALLE").insert(detalles_insertar_temp).execute()
-        
+                                    
                                     # 5. Limpieza de variables temporales de la sesión
                                     for prod_id in conteos_usuario.keys():
                                         key_input = f"inv_in_{prod_id}"
                                         if key_input in st.session_state:
                                             del st.session_state[key_input]
-        
+                                    
                                     if "muestra_azar" in st.session_state:
                                         del st.session_state["muestra_azar"]
-        
+                                    
                                     st.session_state["reset_inventario"] = True
-        
+                                    
                                     st.success(f"✅ Recuento enviado con éxito. Impacto estimado: ${impacto_financiero_total:,.2f}")
                                     st.rerun()
-        
+                                    
                                 except Exception as e:
                                     st.error(f"Error al enviar recuento: {e}")
-        
+                
             # =============================================================
             # VISTA 2: ADMIN (AUDITORÍA Y AJUSTES)
             # =============================================================
@@ -2725,34 +2728,35 @@ else:
                                     
                                     df_merged = pd.merge(df_det, df_prods_info, left_on="id_producto", right_on="ID_Producto", suffixes=('', '_actual'))
                                     
-                                    total_dif = df_merged['diferencia'].sum()
-                                    impacto_dinero = (df_merged['diferencia'] * df_merged['Precio_Costo'].fillna(0)).sum()
+                                    # --- CÁLCULO DINÁMICO TOMANDO EL CONTEO DEL ADMIN ---
+                                    def calcular_dif_admin(row):
+                                        key_input = f"input_admin_stk_{row['id']}"
+                                        # Si el Admin ya interactuó/ingresó un valor en el input, tomar ese valor; si no, tomar el del vendedor.
+                                        val_admin = st.session_state.get(key_input, int(row['stock_contado']))
+                                        return float(val_admin) - float(row['stock_sistema_snap'])
+        
+                                    df_merged['diferencia_efectiva'] = df_merged.apply(calcular_dif_admin, axis=1)
+                                    
+                                    total_dif = df_merged['diferencia_efectiva'].sum()
+                                    impacto_dinero = (df_merged['diferencia_efectiva'] * df_merged['Precio_Costo'].fillna(0)).sum()
                                     
                                     m1, m2 = st.columns(2)
                                     m1.metric("Diferencia Total (Unidades)", f"{total_dif:.0f}")
-                                    m2.metric("Impacto Financiero Estimado", f"${impacto_dinero:,.2f}", delta_color="inverse")
+                                    m2.metric("Impacto Financiero Estimado (Admin)", f"${impacto_dinero:,.2f}", delta_color="inverse")
                                     
                                     st.markdown("---")
                                     
                                     # RENDERIZAR ARTÍCULOS PARA REVISIÓN
                                     for idx, item in df_merged.iterrows():
-                                        dif = item['diferencia']
-                                        if dif == 0:
-                                            color_status = "🟢 COINCIDE"
-                                            border = False
-                                        elif dif < 0:
-                                            color_status = f"🔴 FALTANTE ({dif:.0f})"
-                                            border = True
-                                        else:
-                                            color_status = f"🟡 SOBRANTE (+{dif:.0f})"
-                                            border = True
-                                            
-                                        with st.container(border=border):
+                                        snap_val = float(item['stock_sistema_snap'])
+                                        
+                                        with st.container(border=True):
                                             c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.2, 1.2, 1.5, 1.5, 2])
                                             c1.write(f"**{item['Nombre']}** (`{item['id_producto']}`)")
-                                            c2.write(f"Snap: **{item['stock_sistema_snap']}**")
-                                            c3.write(f"Contado: **{item['stock_contado']}**")
+                                            c2.write(f"Snap: **{snap_val:.0f}**")
+                                            c3.write(f"Contado: **{item['stock_contado']:.0f}**")
                                             
+                                            # Campo para re-conteo / confirmación del admin
                                             valor_admin = c4.number_input(
                                                 "Re-conteo Admin", 
                                                 min_value=0, 
@@ -2761,17 +2765,28 @@ else:
                                                 label_visibility="collapsed"
                                             )
                                             
+                                            # EVALUACIÓN DINÁMICA DE DIFERENCIA
+                                            dif_efectiva = float(valor_admin) - snap_val
+                                            
+                                            if dif_efectiva == 0:
+                                                color_status = "🟢 COINCIDE"
+                                            elif dif_efectiva < 0:
+                                                color_status = f"🔴 FALTANTE ({dif_efectiva:.0f})"
+                                            else:
+                                                color_status = f"🟡 SOBRANTE (+{dif_efectiva:.0f})"
+                                            
                                             c5.write(f"Estado: **{color_status}**")
                                             
                                             with c6:
-                                                if item['estado_item'] == 'PENDIENTE':
+                                                # CONDICIÓN CLAVE: Solo se permite ajustar si hay diferencia real Y está pendiente
+                                                if item['estado_item'] == 'PENDIENTE' and dif_efectiva != 0:
                                                     if st.button("✔️ Aplicar Ajuste", key=f"btn_aj_{item['id']}"):
                                                         try:
                                                             id_prod_str = str(item['id_producto']).strip()
                                                             nombre_prod_str = str(item['Nombre']).strip()
                                                             usuario_actual = st.session_state.get('usuario_actual', 'Admin')
                                                             
-                                                            # 1. Consultar stock actual previo
+                                                            # 1. Consultar stock actual previo de Supabase
                                                             p_actual = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", id_prod_str).execute().data
                                                             stock_previo = float(p_actual[0]['Stock_Actual'] or 0) if p_actual else 0.0
                                                             
@@ -2785,7 +2800,8 @@ else:
                                                             
                                                             # 3. Marcar ítem del inventario como ajustado
                                                             db.table("INVENTARIOS_DETALLE").update({
-                                                                "estado_item": "AJUSTADO"
+                                                                "estado_item": "AJUSTADO",
+                                                                "diferencia": dif_efectiva
                                                             }).eq("id", int(item['id'])).execute()
                                                             
                                                             # 4. REGISTRAR MOVIMIENTO EN LA TABLA MOVIMIENTOS_STOCK (KARDEX)
@@ -2807,7 +2823,7 @@ else:
                                                                 "usuario": str(usuario_actual)
                                                             }).execute()
                                                             
-                                                            # 5. Registrar auditoría general (si la función existe)
+                                                            # 5. Registrar auditoría general
                                                             if 'log_auditoria' in globals():
                                                                 log_auditoria(
                                                                     tabla="PRODUCTOS",
@@ -2828,11 +2844,12 @@ else:
                                                             
                                                         except Exception as e:
                                                             st.error(f"Error al aplicar ajuste y registrar movimiento: {e}")
+                                                            
                                                 elif item['estado_item'] == 'AJUSTADO':
                                                     st.caption("✅ Ajustado")
                                                 else:
-                                                    st.caption("Sin diferencia")
-                                    
+                                                    st.caption("🟢 Sin diferencia")
+                                            
                                     st.markdown("---")
                                     
                                     # --- BOTONES DE ACCIÓN GLOBAL DE AUDITORÍA ---
