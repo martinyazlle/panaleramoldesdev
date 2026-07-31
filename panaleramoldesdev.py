@@ -3358,10 +3358,10 @@ else:
             if 'Es_Stockeable' in df_ranking.columns:
                 df_ranking = df_ranking[df_ranking['Es_Stockeable'] == True]
     
-            # 3. Filtro de negocio: Rubro LECHE solo con presentaciones " x24", " x30" o " x12"
+            # 3. Filtro de negocio: Rubro LECHE solo con presentaciones bulto/pack (" x12", " x24", " x30", " x400", " x800", " x1000", " x1200")
             if 'Rubro' in df_ranking.columns and 'Nombre' in df_ranking.columns:
                 es_leche = df_ranking['Rubro'].astype(str).str.upper() == 'LECHE'
-                contiene_bulto = df_ranking['Nombre'].astype(str).str.contains(' x24| x30| x12', case=False, na=False)
+                contiene_bulto = df_ranking['Nombre'].astype(str).str.contains(' x12| x24| x30| x400| x800| x1000| x1200', case=False, na=False)
                 df_ranking = df_ranking[~es_leche | contiene_bulto]
     
             # Limpieza de numéricos
