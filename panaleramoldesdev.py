@@ -3472,14 +3472,14 @@ else:
                     ascending=[True, False, False]
                 ).reset_index(drop=True)
     
-                # Interfaz de Selección y Generación de Pedidos
-                df_ranking['Pedir'] = False
+                # Selección por defecto: Tildar automáticamente los productos con Urgencia > 0%
+                df_ranking['Pedir'] = df_ranking['Urgencia_%'] > 0
                 
                 cols_abc_mostrar = ['Pedir', 'Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Stock_Min', 'Faltante_Min', 'Score_Comercial']
                 cols_abc_presentes = [c for c in cols_abc_mostrar if c in df_ranking.columns]
     
                 st.markdown("---")
-                st.caption("📌 Marcá los productos prioritarios para armar tu orden de compra en WhatsApp.")
+                st.caption("📌 Los artículos con stock por debajo del mínimo vienen tildados automáticamente. Podés destildar o sumar los que desees.")
     
                 df_abc_editado = st.data_editor(
                     df_ranking[cols_abc_presentes],
@@ -3511,16 +3511,13 @@ else:
                         for _, r in sel_abc.iterrows():
                             cant_comprar = int(r['Faltante_Min']) if r['Faltante_Min'] > 0 else 1
                             
-                            # Obtener el rubro del producto si está presente en la fila
                             rubro_prod = str(r.get('Rubro', '')).strip().upper()
                             
-                            # Determinar unidad de medida
                             if rubro_prod == "LECHE":
                                 unid_texto = "fardo" if cant_comprar == 1 else "fardos"
                             else:
                                 unid_texto = "unidad" if cant_comprar == 1 else "unidades"
                             
-                            # Construir formato solicitado
                             msg_abc += f"{cant_comprar} {unid_texto} *{r['Nombre']}*\n"
                         
                         st.text_area("Copiar mensaje para proveedor:", value=msg_abc, height=220, key="txt_area_abc")
