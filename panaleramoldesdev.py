@@ -2243,12 +2243,53 @@ else:
             if filtro_marca != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Marca'] == filtro_marca]
     
+            # Guardamos una referencia para el generador antes de recortar columnas por rol
+            df_para_wsp = df_filtrado.copy()
+
             # Ajuste de columnas visibles según el rol
             if st.session_state.rol != "Administrador":
                 cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
                 df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
     
             st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
+
+            # -------------------------------------------------------------
+            # 4️⃣ GENERADOR DE RESPUESTA PARA WHATSAPP
+            # -------------------------------------------------------------
+            st.markdown("---")
+            if st.button("💬 Generar Respuesta para WhatsApp", type="primary", key="btn_wsp_precios_prod"):
+                if df_para_wsp.empty:
+                    st.warning("⚠️ No hay productos con los criterios seleccionados para generar la respuesta.")
+                else:
+                    lineas_mensaje = []
+                    
+                    for _, prod in df_para_wsp.iterrows():
+                        nombre = str(prod.get('Nombre', '')).strip()
+                        
+                        try:
+                            p1 = int(float(prod.get('Precio_1', 0)))
+                            p2 = int(float(prod.get('Precio_2', 0)))
+                            p3 = int(float(prod.get('Precio_3', 0)))
+                        except (ValueError, TypeError):
+                            p1, p2, p3 = 0, 0, 0
+                        
+                        # Reglas de precios
+                        if p1 == p2:
+                            # Caso 1: Precio_1 == Precio_2 (Precio único)
+                            linea = f"• *{nombre}* ${p1}"
+                        elif p1 != p2 and p2 == p3:
+                            # Caso 2: Precio_1 != Precio_2 y Precio_2 == Precio_3
+                            linea = f"• *{nombre}* ${p1} x1 o ${p2} cada uno llevando 2"
+                        elif p2 != p3:
+                            # Caso 3: Precio_2 != Precio_3
+                            linea = f"• *{nombre}* ${p1} x1 o ${p3} cada uno llevando 3"
+                        else:
+                            linea = f"• *{nombre}* ${p1}"
+                            
+                        lineas_mensaje.append(linea)
+                    
+                    msg_precios_wsp = "\n".join(lineas_mensaje)
+                    st.text_area("Copiar respuesta para WhatsApp:", value=msg_precios_wsp, height=250, key="txt_area_wsp_precios")
     
         # --- PESTAÑA CAMBIOS ---
         with tab_cambios:
