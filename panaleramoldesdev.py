@@ -1230,28 +1230,32 @@ else:
 
         # 2. INTERFAZ: SELECTORES
         with st.container(border=True):
-            c1, c2, c3, c4 = st.columns([2.5, 0.5, 1, 1]) 
-            
+            # Cambiamos a 3 columnas: c1 (Cliente), c2 (+), c3 (Vendedor)
+            c1, c2, c3 = st.columns([3, 0.5, 1.5])
+        
             # --- HELPER AUXILIAR DE LIMPIEZA ---
             def limpiar_val(val):
-                if pd.isna(val) or val is None or str(val).strip().upper() in ["NAN", "NONE", "NULL"]:
+                if (
+                    pd.isna(val)
+                    or val is None
+                    or str(val).strip().upper() in ["NAN", "NONE", "NULL"]
+                ):
                     return ""
                 return str(val).strip()
         
             # --- 1. CREAR LA COLUMNA DISPLAY (CON RAZÓN SOCIAL INTEGRADA Y LIMPIA) ---
             def obtener_display_cliente(row):
-                razon = limpiar_val(row.get('Razón Social'))
-                nombre = limpiar_val(row.get('Nombre'))
-                apellido = limpiar_val(row.get('Apellido'))
-                tel = limpiar_val(row.get('Telefono'))
-                id_c = row.get('ID_Cliente')
+                razon = limpiar_val(row.get("Razón Social"))
+                nombre = limpiar_val(row.get("Nombre"))
+                apellido = limpiar_val(row.get("Apellido"))
+                tel = limpiar_val(row.get("Telefono"))
+                id_c = row.get("ID_Cliente")
         
                 # Formatear teléfono si existe
                 txt_tel = f" ({tel})" if tel else ""
         
                 # Si tiene Razón Social válida
                 if razon:
-                    # Si además tiene nombre/apellido cargados, los sumamos opcionalmente
                     nombre_completo = f"{nombre} {apellido}".strip()
                     if nombre_completo:
                         return f"{razon.upper()} | {nombre_completo.upper()}{txt_tel} - ID: {id_c}"
@@ -1264,21 +1268,28 @@ else:
                         nombre_completo = "SIN NOMBRE"
                     return f"{nombre_completo.upper()}{txt_tel} - ID: {id_c}"
         
-            df_clie['Display'] = df_clie.apply(obtener_display_cliente, axis=1)
-            
+            df_clie["Display"] = df_clie.apply(obtener_display_cliente, axis=1)
+        
             # --- 2. AHORA SÍ: LÓGICA DE PERSISTENCIA ---
             valor_inicial = None
-            if 'id_cliente_recuperado' in st.session_state:
-                candidatos = df_clie[df_clie['ID_Cliente'].astype(str) == str(st.session_state.id_cliente_recuperado)]
+            if "id_cliente_recuperado" in st.session_state:
+                candidatos = df_clie[
+                    df_clie["ID_Cliente"].astype(str)
+                    == str(st.session_state.id_cliente_recuperado)
+                ]
                 if not candidatos.empty:
-                    valor_inicial = candidatos.iloc[0]['Display']
+                    valor_inicial = candidatos.iloc[0]["Display"]
         
             # --- 3. SELECTOR DE CLIENTE ---
             cliente_display = c1.selectbox(
-                "👤 Buscar Cliente (Nombre, Apellido, Teléfono o Razón Social)", 
-                options=df_clie['Display'].tolist(),
-                index=df_clie['Display'].tolist().index(valor_inicial) if valor_inicial and valor_inicial in df_clie['Display'].tolist() else None, 
-                placeholder="Seleccione o busque un cliente..."
+                "👤 Buscar Cliente (Nombre, Apellido, Teléfono o Razón Social)",
+                options=df_clie["Display"].tolist(),
+                index=(
+                    df_clie["Display"].tolist().index(valor_inicial)
+                    if valor_inicial and valor_inicial in df_clie["Display"].tolist()
+                    else None
+                ),
+                placeholder="Seleccione o busque un cliente...",
             )
         
             # --- EXTRACCIÓN SEGURA Y ÚNICA ---
@@ -1292,50 +1303,52 @@ else:
                     st.session_state.cliente_actual_id = None
             else:
                 st.session_state.cliente_actual_id = None
-            
+        
             # --- BOTÓN DE ACCESO DIRECTO ---
             if c2.button("➕", help="Agregar nuevo cliente"):
                 abrir_alta_cliente_rapida()
-            
+        
             # --- LÓGICA DE ASIGNACIÓN Y NOMBRE EN TICKET ---
             cliente_sel_row = None
             if cliente_display:
-                cliente_sel_row = df_clie[df_clie['Display'] == cliente_display].iloc[0]
-                
-                razon_sel = limpiar_val(cliente_sel_row.get('Razón Social'))
-                nombre_sel = limpiar_val(cliente_sel_row.get('Nombre'))
-                apellido_sel = limpiar_val(cliente_sel_row.get('Apellido'))
-                
+                cliente_sel_row = df_clie[df_clie["Display"] == cliente_display].iloc[0]
+        
+                razon_sel = limpiar_val(cliente_sel_row.get("Razón Social"))
+                nombre_sel = limpiar_val(cliente_sel_row.get("Nombre"))
+                apellido_sel = limpiar_val(cliente_sel_row.get("Apellido"))
+        
                 # 🔥 MEJORA DE FLUJO: Nombre comercial prioritario si existe Razón Social, sino Nombre + Apellido
                 if razon_sel:
                     cliente_nombre_final = razon_sel.upper()
                 else:
-                    cliente_nombre_final = f"{nombre_sel} {apellido_sel}".strip().upper()
+                    cliente_nombre_final = (
+                        f"{nombre_sel} {apellido_sel}".strip().upper()
+                    )
                     if not cliente_nombre_final:
                         cliente_nombre_final = "CONSUMIDOR FINAL"
-                    
-                id_cliente_final = str(cliente_sel_row['ID_Cliente'])
-                st.session_state.id_cliente_recuperado = id_cliente_final 
+        
+                id_cliente_final = str(cliente_sel_row["ID_Cliente"])
+                st.session_state.id_cliente_recuperado = id_cliente_final
             else:
                 id_cliente_final = "0"
                 cliente_nombre_final = "Consumidor Final"
-                if 'id_cliente_recuperado' in st.session_state:
+                if "id_cliente_recuperado" in st.session_state:
                     del st.session_state.id_cliente_recuperado
         
-            # --- 🔥 MAPEO DINÁMICO DE VENDEDOR EN C4 (CON RECUPERACIÓN) ---
-            vendedor_id_final = "1" # Fallback por defecto si no hay datos
-            if 'df_vend' in locals() and not df_vend.empty:
+            # --- 🔥 MAPEO DINÁMICO DE VENDEDOR EN C3 (MOVIDO DESDE C4) ---
+            vendedor_id_final = "1"  # Fallback por defecto si no hay datos
+            if "df_vend" in locals() and not df_vend.empty:
                 # Creamos un diccionario {ID_Vendedor: "Nombre Apellido"}
                 dict_vendedores = {
-                    str(row['ID_Vendedor']): f"{row['Nombre']} {row['Apellido']}" 
+                    str(row["ID_Vendedor"]): f"{row['Nombre']} {row['Apellido']}"
                     for _, row in df_vend.iterrows()
                 }
-                
+        
                 lista_opciones = list(dict_vendedores.keys())
-                
+        
                 # 🔥 Lógica para pre-seleccionar el vendedor recuperado
                 idx_vendedor = 0
-                if 'vendedor_recuperado' in st.session_state:
+                if "vendedor_recuperado" in st.session_state:
                     id_recup = st.session_state.vendedor_recuperado
                     if id_recup in lista_opciones:
                         idx_vendedor = lista_opciones.index(id_recup)
@@ -1343,128 +1356,141 @@ else:
                     del st.session_state.vendedor_recuperado
         
                 # El selectbox opera sobre los IDs (claves) pero muestra los nombres legibles
-                vendedor_id_sel = c4.selectbox(
-                    "👔 Vendedor", 
-                    options=lista_opciones, 
+                vendedor_id_sel = c3.selectbox(
+                    "👔 Vendedor",
+                    options=lista_opciones,
                     format_func=lambda x: dict_vendedores[x],
-                    index=idx_vendedor, # <-- Forzamos el índice recuperado
-                    key="pos_vendedor_selector_dinamico"
+                    index=idx_vendedor,  # <-- Forzamos el índice recuperado
+                    key="pos_vendedor_selector_dinamico",
                 )
                 if vendedor_id_sel:
                     vendedor_id_final = str(vendedor_id_sel)
             else:
                 # Fallback visual clásico si df_vend viniera vacío
-                c4.selectbox("👔 Vendedor", options=["1"], format_func=lambda x: "Vendedor Genérico")
-            
-            # Lista ahora en c3
-            def cambiar_lista_global():
-                st.session_state.lista_global_vta = st.session_state.selector_global
+                c3.selectbox(
+                    "👔 Vendedor",
+                    options=["1"],
+                    format_func=lambda x: "Vendedor Genérico",
+                )
         
-            lista_opciones = ["Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"]
-            lista_global = c3.selectbox(
-                "🏷️ Lista", 
-                options=lista_opciones,
-                index=0, 
-                key="selector_global",
-                on_change=cambiar_lista_global
-            )
-            
+        
         # 3. BUSCADOR DE PRODUCTOS
         st.divider()
         st.subheader("🔍 Añadir Productos")
-
+        
         # --- FILTRO DE DISPONIBILIDAD ---
         # Filtramos: (Tiene stock positivo) O (Es un concepto financiero / No stockeable)
-        # Nota: Asegúrate que el nombre de columna sea el correcto (Stock_Actual)
         df_disponible = df_prod[
-            (df_prod['Stock_Actual'] > 0) | (df_prod['Es_Stockeable'] == False)
+            (df_prod["Stock_Actual"] > 0) | (df_prod["Es_Stockeable"] == False)
         ].copy()
         
         # Creamos la lista formateada con los resultados del filtro
-        opciones_productos = (df_disponible['Nombre'] + " - " + df_disponible['ID_Producto'].astype(str)).tolist()
-
+        opciones_productos = (
+            df_disponible["Nombre"] + " - " + df_disponible["ID_Producto"].astype(str)
+        ).tolist()
+        
         col_bus1, col_bus2 = st.columns([2, 1])
         
         col_bus1.selectbox(
-            "Buscar por nombre o código", 
-            options=opciones_productos, 
-            index=None, 
+            "Buscar por nombre o código",
+            options=opciones_productos,
+            index=None,
             placeholder="Escriba para buscar producto...",
             key="prod_manual_key",
-            on_change=procesar_seleccion_manual 
+            on_change=procesar_seleccion_manual,
         )
         
-        # Aviso: Ahora solo avisaremos si un producto FÍSICO no tiene stock. 
-        # Los productos con Es_Stockeable = False no dispararán esta advertencia.
-        if 'prod_manual_key' in st.session_state and st.session_state.prod_manual_key:
+        # Aviso: Solo advertimos si un producto FÍSICO no tiene stock.
+        if "prod_manual_key" in st.session_state and st.session_state.prod_manual_key:
             busqueda = st.session_state.prod_manual_key
             id_buscado = busqueda.split(" - ")[-1]
-            prod_buscado = df_prod[df_prod['ID_Producto'].astype(str) == id_buscado].iloc[0]
-            
-            # Solo advertimos si es un producto real sin stock
-            if prod_buscado['Stock_Actual'] <= 0 and prod_buscado['Es_Stockeable'] == True:
-                st.warning(f"⚠️ El producto '{prod_buscado['Nombre']}' no se puede agregar porque no cuenta con stock.")
-
-        # 4. CARRITO (Versión Final con Títulos ajustados)
+            prod_buscado = df_prod[
+                df_prod["ID_Producto"].astype(str) == id_buscado
+            ].iloc[0]
+        
+            if (
+                prod_buscado["Stock_Actual"] <= 0
+                and prod_buscado["Es_Stockeable"] == True
+            ):
+                st.warning(
+                    f"⚠️ El producto '{prod_buscado['Nombre']}' no se puede agregar porque no cuenta con stock."
+                )
+        
+        
+        # 4. CARRITO (Versión sin Selector Global)
         if st.session_state.carrito_vta:
             st.write("### 🛒 Detalle de la Venta")
-            
-            global_val = st.session_state.lista_global_vta
-            
+        
             for i, item in enumerate(st.session_state.carrito_vta):
-                res_p = df_prod[df_prod['ID_Producto'].astype(str) == str(item['id'])]
-                if res_p.empty: continue
+                res_p = df_prod[df_prod["ID_Producto"].astype(str) == str(item["id"])]
+                if res_p.empty:
+                    continue
                 p_data = res_p.iloc[0]
-                
+        
                 c1, c2, c3, c4, c5, c6 = st.columns([2, 1.2, 0.8, 1.2, 1, 0.5])
-                
-                # AJUSTE: Nombre en h4 (más grande) y Código en negrita (sin #)
+        
+                # Nombre y Código del producto
                 with c1:
                     st.markdown(f"#### {p_data['Nombre']}")
-                    st.markdown(f"<p style='font-size:14px;'><strong>{p_data['ID_Producto']}</strong></p>", unsafe_allow_html=True)
-                
-                # 1. Selector de Lista
-                lista_actual_producto = item.get('lista_local', global_val)
+                    st.markdown(
+                        f"<p style='font-size:14px;'><strong>{p_data['ID_Producto']}</strong></p>",
+                        unsafe_allow_html=True,
+                    )
+        
+                # 1. Selector de Lista (Por defecto: "Automática (P1/P2)")
+                lista_actual_producto = item.get("lista_local", "Automática (P1/P2)")
+                opciones_lista = [
+                    "Automática (P1/P2)",
+                    "Lista 1",
+                    "Lista 2",
+                    "Lista 3",
+                    "Lista 4",
+                    "Lista 5",
+                ]
+        
                 lista_item = c2.selectbox(
-                    "Lista", 
-                    ["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"],
-                    index=["Automática (P1/P2)", "Lista 1", "Lista 2", "Lista 3", "Lista 4", "Lista 5"].index(lista_actual_producto),
-                    key=f"L_{i}_{global_val}" 
+                    "Lista",
+                    opciones_lista,
+                    index=opciones_lista.index(lista_actual_producto),
+                    key=f"L_{i}",
                 )
-                
+        
                 if lista_item != lista_actual_producto:
-                    item['lista_local'] = lista_item
+                    item["lista_local"] = lista_item
                     st.rerun()
-                
+        
                 # 2. Cantidad
-                n_cant = c3.number_input("Cant.", min_value=1, value=int(item['cantidad']), key=f"Q_{i}")
-                
+                n_cant = c3.number_input(
+                    "Cant.", min_value=1, value=int(item["cantidad"]), key=f"Q_{i}"
+                )
+        
                 # 3. Calcular el precio SUGERIDO
                 if lista_item == "Automática (P1/P2)":
-                    if n_cant == 1: col_p = 'Precio_1'
-                    elif n_cant == 2: col_p = 'Precio_2'
-                    else: col_p = 'Precio_3'
+                    if n_cant == 1:
+                        col_p = "Precio_1"
+                    elif n_cant == 2:
+                        col_p = "Precio_2"
+                    else:
+                        col_p = "Precio_3"
                 else:
                     col_p = lista_item.replace("Lista ", "Precio_")
-                
+        
                 precio_sugerido = float(p_data[col_p])
-                
+        
                 # 4. Input Precio
                 n_prec = c4.number_input(
-                    "Precio", 
-                    value=precio_sugerido, 
-                    key=f"P_{i}_{lista_item}_{n_cant}_{precio_sugerido}", 
-                    format="%.2f"
+                    "Precio",
+                    value=precio_sugerido,
+                    key=f"P_{i}_{lista_item}_{n_cant}_{precio_sugerido}",
+                    format="%.2f",
                 )
-                
+        
                 # 5. Actualización
                 sub = n_cant * n_prec
-                st.session_state.carrito_vta[i].update({
-                    'cantidad': n_cant,
-                    'precio': n_prec,
-                    'subtotal': sub
-                })
-                
+                st.session_state.carrito_vta[i].update(
+                    {"cantidad": n_cant, "precio": n_prec, "subtotal": sub}
+                )
+        
                 c5.write(f"Sub: **${sub:,.2f}**")
                 if c6.button("🗑️", key=f"del_{i}"):
                     st.session_state.carrito_vta.pop(i)
