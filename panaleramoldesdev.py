@@ -955,6 +955,78 @@ else:
         except Exception as e:
             st.error(f"Error al cargar puntos de reparto desde la base de datos: {e}")
             return {}
+
+    @st.dialog("➕ Alta Rápida de Producto", width="large")
+    def modal_alta_rapida_producto():
+        # Obtener opciones globales de forma segura (para no romper si no están definidas)
+        rubros_opt = LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General", "OTROS"]
+        prov_opt = lista_proveedores if 'lista_proveedores' in globals() else ["Genérico"]
+    
+        with st.form("form_alta_producto_rapido", clear_on_submit=False):
+            c_alta1, c_alta2 = st.columns(2)
+            
+            with c_alta1:
+                id_nuevo = st.text_input("Código / ID Producto*", key="alta_rap_id").strip()
+                nombre_nuevo = st.text_input("Descripción / Nombre*", key="alta_rap_nom").strip()
+                marca_nueva = st.text_input("Marca", key="alta_rap_marca").strip()
+                rubro_nuevo = st.selectbox("Rubro", options=rubros_opt, key="alta_rap_rubro")
+                prov_seleccionado = st.selectbox("Proveedor", options=prov_opt, key="alta_rap_prov")
+                
+            with c_alta2:
+                stock_ini = st.number_input("Stock Inicial", min_value=0, value=0, step=1, key="alta_rap_stock")
+                costo_ini = st.number_input("Precio Costo ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_costo")
+                p1 = st.number_input("Precio Lista 1 ($)*", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p1")
+                p2 = st.number_input("Precio Lista 2 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p2")
+                p3 = st.number_input("Precio Lista 3 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p3")
+                p4 = st.number_input("Precio Lista 4 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p4")
+                p5 = st.number_input("Precio Lista 5 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p5")
+    
+            st.caption("* Campos obligatorios")
+            # El botón ahora refleja que se añadirá directamente a la compra
+            btn_guardar = st.form_submit_button("💾 Guardar y Añadir a la Compra")
+    
+        if btn_guardar:
+            if not id_nuevo or not nombre_nuevo or p1 <= 0:
+                st.error("Por favor, completa los campos obligatorios (ID, Nombre y Precio 1 > 0).")
+            else:
+                nuevo_prod = {
+                    "ID_Producto": id_nuevo,
+                    "Nombre": nombre_nuevo,
+                    "Rubro": rubro_nuevo if rubro_nuevo != "" else "OTROS",
+                    "Marca": marca_nueva if marca_nueva != "" else None,
+                    "Stock_Actual": int(stock_ini),
+                    "Precio_Costo": float(costo_ini),
+                    "Precio_1": float(p1),
+                    "Precio_2": float(p2),
+                    "Precio_3": float(p3),
+                    "Precio_4": float(p4),
+                    "Precio_5": float(p5),
+                    "ID_Proveedor": prov_seleccionado if prov_seleccionado != "Genérico" else None,
+                    "Stock_Min": 0,
+                    "Stock_Max": 0,
+                    "Imagen": None,
+                    "Estado": "ACTIVO" # Aseguramos que entre activo
+                }
+                
+                try:
+                    # 1. Guardar en Base de Datos
+                    db.table("PRODUCTOS").insert(nuevo_prod).execute()
+                    
+                    # 2. Invalidar caché para que el buscador global se actualice luego
+                    if 'df_prod' in st.session_state: 
+                        del st.session_state['df_prod']
+                    
+                    # 3. Auto-Añadirlo al carrito transformando el dict a una pd.Series 
+                    # (Para que tu función _agregar_al_carrito lo lea sin problemas)
+                    pm_nuevo = pd.Series(nuevo_prod)
+                    _agregar_al_carrito(pm_nuevo)
+                    
+                    st.success(f"🎉 ¡Producto guardado y añadido a la compra!")
+                    
+                    # 4. Cerrar el modal y refrescar
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error técnico al guardar: {e}")
     
     # --- CONFIGURACIÓN ESTÉTICA ---
     st.set_page_config(page_title="Pañalera Moldes - ERP", layout="wide")
@@ -3952,17 +4024,25 @@ else:
         # 2. Preparamos las opciones de búsqueda
         opciones_busqueda = (df_prod['Nombre'] + " - " + df_prod['ID_Producto'].astype(str)).tolist()
         
-        # 3. Interfaz única
-        st.selectbox(
-            "Buscar por nombre o código", 
-            options=opciones_busqueda, 
-            index=None,
-            placeholder="Escriba para buscar producto o escanee...",
-            key="prod_compra_key",
-            on_change=procesar_seleccion_compra
-        )
+        # 3. Interfaz única (CON COLUMNAS PARA EL BOTÓN +)
+        col_busc, col_btn = st.columns([11, 1], vertical_alignment="bottom")
         
-        # --- DISPARADOR DEL POP-UP ---
+        with col_busc:
+            st.selectbox(
+                "Buscar por nombre o código", 
+                options=opciones_busqueda, 
+                index=None,
+                placeholder="Escriba para buscar producto o escanee...",
+                key="prod_compra_key",
+                on_change=procesar_seleccion_compra
+            )
+            
+        with col_btn:
+            # Botón disparador del st.dialog
+            if st.button("➕", help="Dar de alta un nuevo producto"):
+                modal_alta_rapida_producto()
+        
+        # --- DISPARADOR DEL POP-UP (Inactivos) ---
         # Si hay un producto inactivo pendiente de confirmación, se abre el diálogo modal
         if st.session_state.get("prod_inactivo_pendiente") is not None:
             confirmar_activacion_producto(st.session_state.prod_inactivo_pendiente)
