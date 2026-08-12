@@ -1782,175 +1782,191 @@ else:
             st.session_state.link_maps_entrega = link_elegido
             st.session_state.observaciones_entrega = observaciones_vta # 👈 3. GUARDAMOS EN SESSION_STATE
 
-        # --- 6. BOTONES DE CIERRE (CORREGIDO) ---
+        # --- 6. BOTONES DE CIERRE (Solo visibles si hay productos en el carrito) ---
+        if st.session_state.carrito_vta:
             st.divider()
             col_f1, col_f2 = st.columns(2)
-
+        
             with col_f1:
                 if st.button("🏁 FINALIZAR Y REGISTRAR VENTA", width='stretch', type="primary"):
-                    # 0. Verificación de sumas
+                    # 0. Verificación de sumas de pago
                     suma_pagos = sum(float(p["monto"]) for p in st.session_state.pagos_split)
                     if abs(suma_pagos - total_final_vta) > 0.01:
                         st.error(f"¡Error! La suma de los pagos (${suma_pagos:.2f}) no coincide con el total (${total_final_vta:.2f})")
-                        st.stop()
-                    
-                    # --- NUEVO: BLINDAJE DE SEGURIDAD PARA GIFT CARDS ---
-                    for pago in st.session_state.pagos_split:
-                        if "Gift Card" in pago["metodo"]:
-                            gc_check = db.table("GIFT_CARDS") \
-                                         .select("Saldo_Actual") \
-                                         .eq("ID_GiftCard", st.session_state.get('gc_activa_id')) \
-                                         .single().execute()
-                            
-                            saldo_real = gc_check.data['Saldo_Actual'] if gc_check.data else 0
-                            
-                            if pago["monto"] > saldo_real:
-                                st.error(f"❌ ¡Saldo insuficiente en Gift Card! Disponible: ${saldo_real:,.2f}")
-                                st.stop()
-                    # ----------------------------------------------------
-                    
-                    try:
-                        # 1. DEFINIR DATOS BÁSICOS PRIMERO
-                        id_v = datetime.now().strftime("%Y%m%d%H%M%S")
-                        f = datetime.now().strftime("%Y-%m-%d")
-                        
-                        # --- OBTENER TURNO Y NOMBRE DE USUARIO ---
-                        turno_res = db.table("CONTROL_TURNOS").select("ID_Turno").eq("Estado", "Abierto").maybe_single().execute()
-                        id_turno_val = turno_res.data['ID_Turno'] if (turno_res and turno_res.data) else "SIN_TURNO"
-            
-                        # Obtenemos el nombre del vendedor (o tomamos el de st.session_state si existe)
-                        nombre_usuario_actual = st.session_state.get('usuario_nombre')
-                        if not nombre_usuario_actual:
-                            u_res = db.table("USUARIOS").select("Nombre").eq("ID_Usuario", vendedor_id_final).single().execute()
-                            nombre_usuario_actual = u_res.data.get('Nombre') if (u_res and u_res.data) else str(vendedor_id_final)
-            
-                        # 2. Registrar Cabecera
-                        desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
-                        db.table("VENTAS_CABECERA").insert({
-                            "ID_Venta": id_v,
-                            "Fecha": f,
-                            "ID_Cliente": id_cliente_final,
-                            "ID_Vendedor": vendedor_id_final, 
-                            "Forma_Pago": desglose_pagos,
-                            "Total": total_final_vta,
-                            "Forma_Entrega": st.session_state.tipo_entrega,
-                            "Direccion_Entrega": st.session_state.direccion_entrega if st.session_state.tipo_entrega == "Reparto" else "N/A",
-                            "Observaciones": st.session_state.get('observaciones_entrega', '')
-                        }).execute()
-                        
-                        for art in st.session_state.carrito_vta:
-                            # 1. CONSULTA EL COSTO ACTUAL Y NOMBRE DEL PRODUCTO
-                            prod_data = db.table("PRODUCTOS").select("Precio_Costo", "Nombre").eq("ID_Producto", str(art['id'])).single().execute()
-                            
-                            # 2. DEFINIMOS EL COSTO Y NOMBRE
-                            costo_historico = prod_data.data.get('Precio_Costo', 0) if prod_data.data else 0
-                            nombre_prod = art.get('nombre') or (prod_data.data.get('Nombre') if prod_data.data else 'Artículo')
-            
-                            # 3. INSERTAMOS EN VENTAS_DETALLE
-                            db.table("VENTAS_DETALLE").insert({
-                                "ID_Venta": id_v,
-                                "ID_Producto": str(art['id']),
-                                "Cantidad": int(art['cantidad']),
-                                "Precio_Unitario": float(art['precio']),
-                                "Precio_Costo_Unitario": float(costo_historico),
-                                "Subtotal": float(art['subtotal'])
-                            }).execute()
-                            
-                            # 4. ACTUALIZAMOS EL STOCK Y REGISTRAMOS EN MOVIMIENTOS_STOCK
-                            prod_res = db.table("PRODUCTOS").select("Stock_Actual").eq("ID_Producto", art['id']).single().execute()
-                            if prod_res.data:
-                                stock_actual = int(prod_res.data.get('Stock_Actual', 0))
-                                cantidad_vendida = int(art['cantidad'])
-                                stock_nuevo = stock_actual - cantidad_vendida
-            
-                                # Actualización del stock actual
-                                db.table("PRODUCTOS").update({"Stock_Actual": stock_nuevo}) \
-                                    .eq("ID_Producto", art['id']).execute()
-            
-                                # Registro del movimiento en el Kardex guardando el Nombre del Usuario
-                                db.table("MOVIMIENTOS_STOCK").insert({
-                                    "id_producto": str(art['id']),
-                                    "nombre_producto": nombre_prod,
-                                    "tipo_movimiento": "VENTA",
-                                    "cantidad": -cantidad_vendida,
-                                    "stock_anterior": stock_actual,
-                                    "stock_nuevo": stock_nuevo,
-                                    "origen_referencia": f"Venta ID: {id_v}",
-                                    "usuario": str(nombre_usuario_actual)  # 👈 Guardamos el Nombre
+                    else:
+                        # ---------------------------------------------------------
+                        # 🔥 VALIDACIÓN DE STOCK REAL EN BASE DE DATOS
+                        # ---------------------------------------------------------
+                        hay_error_stock = False
+                        for item in st.session_state.carrito_vta:
+                            p_check = db.table("PRODUCTOS").select("Nombre", "Stock_Actual", "Es_Stockeable").eq("ID_Producto", str(item["id"])).single().execute()
+                            if p_check.data:
+                                es_stockeable = p_check.data.get("Es_Stockeable", True)
+                                stock_actual = float(p_check.data.get("Stock_Actual", 0))
+                                cant_solicitada = float(item["cantidad"])
+        
+                                if es_stockeable and cant_solicitada > stock_actual:
+                                    nombre_prod = p_check.data.get("Nombre", "Desconocido")
+                                    st.error(f'El artículo "{nombre_prod}" no posee esa cantidad para facturar, revisar código y stock')
+                                    hay_error_stock = True
+                                    break
+        
+                        # --- BLINDAJE DE SEGURIDAD PARA GIFT CARDS ---
+                        hay_error_gc = False
+                        if not hay_error_stock:
+                            for pago in st.session_state.pagos_split:
+                                if "Gift Card" in pago["metodo"]:
+                                    gc_check = db.table("GIFT_CARDS") \
+                                                 .select("Saldo_Actual") \
+                                                 .eq("ID_GiftCard", st.session_state.get('gc_activa_id')) \
+                                                 .single().execute()
+                                    
+                                    saldo_real = float(gc_check.data['Saldo_Actual']) if (gc_check and gc_check.data) else 0.0
+                                    
+                                    if pago["monto"] > saldo_real:
+                                        st.error(f"❌ ¡Saldo insuficiente en Gift Card! Disponible: ${saldo_real:,.2f}")
+                                        hay_error_gc = True
+                                        break
+        
+                        # PROCESAR VENTA SOLO SI NO HAY ERRORES
+                        if not hay_error_stock and not hay_error_gc:
+                            try:
+                                # 1. DEFINIR DATOS BÁSICOS
+                                id_v = datetime.now().strftime("%Y%m%d%H%M%S")
+                                f = datetime.now().strftime("%Y-%m-%d")
+                                
+                                # --- OBTENER TURNO Y NOMBRE DE USUARIO ---
+                                turno_res = db.table("CONTROL_TURNOS").select("ID_Turno").eq("Estado", "Abierto").maybe_single().execute()
+                                id_turno_val = turno_res.data['ID_Turno'] if (turno_res and turno_res.data) else "SIN_TURNO"
+        
+                                nombre_usuario_actual = st.session_state.get('usuario_nombre')
+                                if not nombre_usuario_actual:
+                                    u_res = db.table("USUARIOS").select("Nombre").eq("ID_Usuario", vendedor_id_final).single().execute()
+                                    nombre_usuario_actual = u_res.data.get('Nombre') if (u_res and u_res.data) else str(vendedor_id_final)
+        
+                                # 2. Registrar Cabecera
+                                desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
+                                db.table("VENTAS_CABECERA").insert({
+                                    "ID_Venta": id_v,
+                                    "Fecha": f,
+                                    "ID_Cliente": id_cliente_final,
+                                    "ID_Vendedor": vendedor_id_final, 
+                                    "Forma_Pago": desglose_pagos,
+                                    "Total": total_final_vta,
+                                    "Forma_Entrega": st.session_state.tipo_entrega,
+                                    "Direccion_Entrega": st.session_state.direccion_entrega if st.session_state.tipo_entrega == "Reparto" else "N/A",
+                                    "Observaciones": st.session_state.get('observaciones_entrega', '')
                                 }).execute()
-            
-                        # 4. Registrar Pagos en VENTAS_PAGOS
-                        for pago in st.session_state.pagos_split:
-                            db.table("VENTAS_PAGOS").insert({
-                                "ID_Venta": id_v,
-                                "Metodo_Pago": pago["metodo"],
-                                "Monto": float(pago["monto"])
-                            }).execute()
-            
-                        # 5. Registrar en Caja
-                        for pago in st.session_state.pagos_split:
-                            metodo = pago["metodo"]
-                            monto = float(pago["monto"])
-                            
-                            db.table("CAJA").insert({
-                                "ID_Turno": id_turno_val,
-                                "Fecha": datetime.now().isoformat(),
-                                "Tipo": "Ingreso",
-                                "Concepto": f"Venta {id_v} ({metodo})",
-                                "Monto": monto,
-                                "Forma_Pago": metodo
-                            }).execute()
-            
-                            es_efectivo_reparto = (metodo == "Efectivo" and st.session_state.tipo_entrega == "Reparto")
-                            es_otro_metodo = (metodo != "Efectivo")
-                            
-                            if es_efectivo_reparto or es_otro_metodo:
-                                if "Gift Card" in metodo:
-                                    gc_id = st.session_state.get('gc_activa_id')
-                                    nuevo_saldo = st.session_state.get('gc_saldo_disponible', 0) - monto
-                                    db.table("GIFT_CARDS").update({"Saldo_Actual": float(nuevo_saldo)}).eq("ID_GiftCard", gc_id).execute()
-                                    if nuevo_saldo <= 0:
-                                        db.table("GIFT_CARDS").update({"Estado": False}).eq("ID_GiftCard", gc_id).execute()
-            
-                                db.table("CAJA").insert({
-                                    "ID_Turno": id_turno_val,
-                                    "Fecha": datetime.now().isoformat(),
-                                    "Tipo": "Egreso",
-                                    "Concepto": f"RETIRO PAGO {metodo.upper()} (Venta {id_v})",
-                                    "Monto": monto,
-                                    "Forma_Pago": metodo
-                                }).execute()
-            
-                        if 'id_pendiente_cargado' in st.session_state:
-                            db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", st.session_state.id_pendiente_cargado).execute()
-                            del st.session_state.id_pendiente_cargado
-            
-                        st.success("✅ Venta registrada correctamente!")
-                        st.session_state.carrito_vta = []
-                        st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
-                        st.session_state.observaciones_entrega = ""
-                        st.rerun()
-            
-                    except Exception as e:
-                        st.error(f"Error al registrar: {e}")
-
+                                
+                                # 3. Registrar Detalle y Actualizar Stock (Solo si es_stockeable)
+                                for art in st.session_state.carrito_vta:
+                                    prod_data = db.table("PRODUCTOS").select("Precio_Costo", "Nombre", "Stock_Actual", "Es_Stockeable").eq("ID_Producto", str(art['id'])).single().execute()
+                                    
+                                    costo_historico = prod_data.data.get('Precio_Costo', 0) if prod_data.data else 0
+                                    nombre_prod = art.get('nombre') or (prod_data.data.get('Nombre') if prod_data.data else 'Artículo')
+                                    es_stockeable = prod_data.data.get('Es_Stockeable', True) if prod_data.data else True
+        
+                                    db.table("VENTAS_DETALLE").insert({
+                                        "ID_Venta": id_v,
+                                        "ID_Producto": str(art['id']),
+                                        "Cantidad": int(art['cantidad']),
+                                        "Precio_Unitario": float(art['precio']),
+                                        "Precio_Costo_Unitario": float(costo_historico),
+                                        "Subtotal": float(art['subtotal'])
+                                    }).execute()
+                                    
+                                    # Descontar stock SOLO si es producto stockeable
+                                    if es_stockeable and prod_data.data:
+                                        stock_actual = int(prod_data.data.get('Stock_Actual', 0))
+                                        cantidad_vendida = int(art['cantidad'])
+                                        stock_nuevo = stock_actual - cantidad_vendida
+        
+                                        db.table("PRODUCTOS").update({"Stock_Actual": stock_nuevo}).eq("ID_Producto", str(art['id'])).execute()
+        
+                                        db.table("MOVIMIENTOS_STOCK").insert({
+                                            "id_producto": str(art['id']),
+                                            "nombre_producto": nombre_prod,
+                                            "tipo_movimiento": "VENTA",
+                                            "cantidad": -cantidad_vendida,
+                                            "stock_anterior": stock_actual,
+                                            "stock_nuevo": stock_nuevo,
+                                            "origen_referencia": f"Venta ID: {id_v}",
+                                            "usuario": str(nombre_usuario_actual)
+                                        }).execute()
+        
+                                # 4. Registrar Pagos en VENTAS_PAGOS
+                                for pago in st.session_state.pagos_split:
+                                    db.table("VENTAS_PAGOS").insert({
+                                        "ID_Venta": id_v,
+                                        "Metodo_Pago": pago["metodo"],
+                                        "Monto": float(pago["monto"])
+                                    }).execute()
+        
+                                # 5. Registrar en Caja y procesar Gift Cards
+                                for pago in st.session_state.pagos_split:
+                                    metodo = pago["metodo"]
+                                    monto = float(pago["monto"])
+                                    
+                                    db.table("CAJA").insert({
+                                        "ID_Turno": id_turno_val,
+                                        "Fecha": datetime.now().isoformat(),
+                                        "Tipo": "Ingreso",
+                                        "Concepto": f"Venta {id_v} ({metodo})",
+                                        "Monto": monto,
+                                        "Forma_Pago": metodo
+                                    }).execute()
+        
+                                    es_efectivo_reparto = (metodo == "Efectivo" and st.session_state.tipo_entrega == "Reparto")
+                                    es_otro_metodo = (metodo != "Efectivo")
+                                    
+                                    if es_efectivo_reparto or es_otro_metodo:
+                                        if "Gift Card" in metodo:
+                                            gc_id = st.session_state.get('gc_activa_id')
+                                            gc_curr = db.table("GIFT_CARDS").select("Saldo_Actual").eq("ID_GiftCard", gc_id).single().execute()
+                                            saldo_base = float(gc_curr.data['Saldo_Actual']) if (gc_curr and gc_curr.data) else 0.0
+                                            nuevo_saldo = saldo_base - monto
+                                            
+                                            db.table("GIFT_CARDS").update({"Saldo_Actual": float(nuevo_saldo)}).eq("ID_GiftCard", gc_id).execute()
+                                            if nuevo_saldo <= 0:
+                                                db.table("GIFT_CARDS").update({"Estado": False}).eq("ID_GiftCard", gc_id).execute()
+        
+                                        db.table("CAJA").insert({
+                                            "ID_Turno": id_turno_val,
+                                            "Fecha": datetime.now().isoformat(),
+                                            "Tipo": "Egreso",
+                                            "Concepto": f"RETIRO PAGO {metodo.upper()} (Venta {id_v})",
+                                            "Monto": monto,
+                                            "Forma_Pago": metodo
+                                        }).execute()
+        
+                                if 'id_pendiente_cargado' in st.session_state:
+                                    db.table("VENTAS_PENDIENTES").delete().eq("ID_Pendiente", st.session_state.id_pendiente_cargado).execute()
+                                    del st.session_state.id_pendiente_cargado
+        
+                                st.success("✅ Venta registrada correctamente!")
+                                st.session_state.carrito_vta = []
+                                st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
+                                st.session_state.observaciones_entrega = ""
+                                st.rerun()
+        
+                            except Exception as e:
+                                st.error(f"Error al registrar: {e}")
+        
             with col_f2:
                 if st.button("⏳ GUARDAR COMO PENDIENTE", width='stretch'):
                     import json
-                    import re # Asegúrate de importar re al principio de tu archivo
+                    import re
                     
                     try:
-                        # --- NUEVO: Lógica de extracción de coordenadas ---
                         lat, lng = None, None
                         link = st.session_state.link_maps_entrega
                         if link:
-                            # Busca números decimales después de un '@' o en parámetros 'll='
                             coords = re.findall(r'@(-?\d+\.\d+),(-?\d+\.\d+)', link)
                             if coords:
                                 lat, lng = float(coords[0][0]), float(coords[0][1])
-                        
+        
                         desglose_pagos = " | ".join([f"{p['metodo']}: ${p['monto']:,.0f}" for p in st.session_state.pagos_split])
-                        
+        
                         data_to_save = {
                             "Fecha": datetime.now().strftime('%Y-%m-%d'),
                             "Hora": datetime.now().strftime('%H:%M:%S'),
@@ -1964,26 +1980,22 @@ else:
                             "Direccion_Entrega": st.session_state.direccion_entrega,
                             "Link_Maps_Entrega": link,
                             "Fecha_Entrega": st.session_state.fecha_reparto,
-                            "Observaciones": st.session_state.get('observaciones_entrega', ''), # 👈 AGREGAR AQUÍ
+                            "Observaciones": st.session_state.get('observaciones_entrega', ''),
                             "Latitud": lat,
                             "Longitud": lng
                         }
-
-                        # --- LA LÓGICA DE DETECCIÓN ---
+        
                         if 'id_pendiente_cargado' in st.session_state and st.session_state.id_pendiente_cargado:
-                            # Si existe el ID, actualizamos el registro existente
                             db.table("VENTAS_PENDIENTES") \
-                            .update(data_to_save) \
-                            .eq("ID_Pendiente", st.session_state.id_pendiente_cargado) \
-                            .execute()
+                              .update(data_to_save) \
+                              .eq("ID_Pendiente", st.session_state.id_pendiente_cargado) \
+                              .execute()
                             st.toast("Venta pendiente actualizada", icon="🔄")
                         else:
-                            # Si no existe, es una venta nueva: insertamos
                             data_to_save["ID_Pendiente"] = f"PEND-{datetime.now().strftime('%Y%m%d%H%M%S')}"
                             db.table("VENTAS_PENDIENTES").insert(data_to_save).execute()
                             st.toast("Venta guardada como nuevo pendiente", icon="⏳")
-
-                        # Limpieza post-guardado
+        
                         st.session_state.carrito_vta = []
                         st.session_state.pagos_split = [{"metodo": "Efectivo", "monto": 0.0}]
                         st.session_state.observaciones_entrega = ""
