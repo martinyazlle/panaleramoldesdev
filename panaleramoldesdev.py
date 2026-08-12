@@ -2367,39 +2367,39 @@ else:
         # --- PESTAÑA BUSCAR ---
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
-    
+        
             # --- CONTROLES Y FILTROS RÁPIDOS ---
             c_chk1, c_chk2 = st.columns(2)
-    
-            # 1. Filtro de Stock > 0 (Disponible para todos los roles)
-            solo_con_stock = c_chk1.checkbox("📦 Solo productos con Stock > 0", value=False, key="chk_solo_con_stock")
-    
+        
+            # 1. Filtro de Stock > 0 (Tildado por defecto)
+            solo_con_stock = c_chk1.checkbox("📦 Solo productos con Stock > 0", value=True, key="chk_solo_con_stock")
+        
             # 2. Mostrar Inactivos (Solo disponible para Administradores)
             mostrar_inactivos = False
             if st.session_state.rol == "Administrador":
                 mostrar_inactivos = c_chk2.checkbox("👁️ Mostrar productos INACTIVOS", value=False, key="chk_inactivos")
-    
+        
             busqueda_texto = st.text_input(
                 "Escriba para filtrar por nombre o código:", 
                 placeholder="Ej: pampers, toallitas, 779...",
                 key="busqueda_tab_buscar"
             )
-    
+        
             c1, c2 = st.columns(2)
             rubros = ["Todos"] + [r for r in st.session_state.df_prod['Rubro'].dropna().unique().tolist() if r]
             marcas = ["Todos"] + [m for m in st.session_state.df_prod['Marca'].dropna().unique().tolist() if m]
-    
+        
             filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_tab")
             filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_tab")
-    
+        
             df_filtrado = st.session_state.df_prod.copy()
-    
+        
             # -------------------------------------------------------------
             # 1️⃣ FILTRO DE PRODUCTOS INACTIVOS
             # -------------------------------------------------------------
             if 'Estado' in df_filtrado.columns and not mostrar_inactivos:
                 df_filtrado = df_filtrado[df_filtrado['Estado'] != 'INACTIVO']
-    
+        
             # -------------------------------------------------------------
             # 2️⃣ FILTRO DE STOCK DISPONIBLE (Stock_Actual > 0)
             # -------------------------------------------------------------
@@ -2407,7 +2407,7 @@ else:
                 # Aseguramos que interprete el stock como número por seguridad
                 df_filtrado['Stock_Actual'] = pd.to_numeric(df_filtrado['Stock_Actual'], errors='coerce').fillna(0)
                 df_filtrado = df_filtrado[df_filtrado['Stock_Actual'] > 0]
-    
+        
             # -------------------------------------------------------------
             # 3️⃣ FILTROS DE BÚSQUEDA POR TEXTO, RUBRO Y MARCA
             # -------------------------------------------------------------
@@ -2416,22 +2416,28 @@ else:
                 mask = df_filtrado['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
                        df_filtrado['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
                 df_filtrado = df_filtrado[mask]
-    
+        
             if filtro_rubro != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Rubro'] == filtro_rubro]
             if filtro_marca != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Marca'] == filtro_marca]
-    
+        
+            # -------------------------------------------------------------
+            # 🔤 ORDENAR ALFABÉTICAMENTE POR NOMBRE
+            # -------------------------------------------------------------
+            if 'Nombre' in df_filtrado.columns:
+                df_filtrado = df_filtrado.sort_values(by='Nombre', key=lambda col: col.str.lower(), ascending=True)
+        
             # Guardamos una referencia para el generador antes de recortar columnas por rol
             df_para_wsp = df_filtrado.copy()
-
+        
             # Ajuste de columnas visibles según el rol
             if st.session_state.rol != "Administrador":
                 cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
                 df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
-    
+        
             st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
-
+        
             # -------------------------------------------------------------
             # 4️⃣ GENERADOR DE RESPUESTA PARA WHATSAPP
             # -------------------------------------------------------------
