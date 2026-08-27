@@ -657,7 +657,7 @@ else:
                         ),
                     ],
                 ))
-        
+    
         # Formulario de orden
         with st.form(key=f"form_orden_{fecha}"):
             orden_manual = {}
@@ -682,21 +682,24 @@ else:
         st.write("### 🚚 Ruta Optimizada Final")
         texto_whatsapp = f"*DIAGRAMA DE REPARTOS {fecha}*\n\n"
         
-        for i, v in enumerate(ruta_reordenada, 1):
-            monto = "0"
-            try:
-                if v.get('Pagos_JSON'):
-                    pagos = json.loads(v['Pagos_JSON'])
-                    if isinstance(pagos, list) and len(pagos) > 0:
-                        monto = pagos[0].get('monto', '0')
-            except:
-                monto = "0"
+        # Se corrige la iteración sobre ruta_reordenada
+        for i, row in enumerate(ruta_reordenada, start=1):
+            cliente = row['Cliente']
+            total = row.get('Total', 0)
+            metodo_pago = row.get('Metodo_Pago', '')
             
-            st.write(f"{i}. **{v['Cliente']}** - ${monto} - {v.get('Metodo_Pago', 'N/A')}")
-            texto_whatsapp += f"{i}. {v['Cliente']} ${monto} {v.get('Metodo_Pago', 'N/A')}\n"
+            # 1. Armamos la base de la línea
+            linea = f"{i}. {cliente} ${total} {metodo_pago}"
+            
+            # 2. Extraemos y validamos si existen observaciones
+            obs = row.get('Observaciones', '')
+            if pd.notna(obs) and str(obs).strip() and str(obs).strip().lower() not in ["nan", "none"]:
+                linea += f" *{str(obs).strip()}*"
+                
+            texto_whatsapp += linea + "\n"
         
-        st.divider()
-        st.text_area("Selecciona y copia:", value=texto_whatsapp, height=200)
+        # Muestra el resultado listo para copiar
+        st.text_area("📋 Copiar para WhatsApp:", value=texto_whatsapp, height=200)
     
     def extraer_coords_desde_link(link):
         # Busca el patrón @-XX.XXXX,-YY.YYYY en el link
