@@ -2616,6 +2616,12 @@ else:
         with tab_divisor:
             st.subheader("✂️ Divisor de Fardos")
             
+            # Notificación persistente después del st.rerun()
+            if st.session_state.get('msg_division_exitosa'):
+                st.success(st.session_state.msg_division_exitosa)
+                st.toast("✅ ¡División de fardo procesada correctamente!", icon="🎉")
+                del st.session_state['msg_division_exitosa']
+        
             patrones_fardo = [r'\bx12\b', r'\bx24\b', r'\bx30\b', r'\bX12\b', r'\bX24\b', r'\bX30\b']
             regex_patron = '|'.join(patrones_fardo)
             
@@ -2636,7 +2642,7 @@ else:
                     st.session_state.id_fardo_temp = id_fardo 
                     st.session_state.fila_fardo_temp = df_filtrado_div[df_filtrado_div['ID_Producto'].astype(str) == id_fardo].iloc[0]
                     
-                    st.info(f"Fardo: {st.session_state.fila_fardo_temp['Nombre']} | Stock: {st.session_state.fila_fardo_temp['Stock_Actual']}")
+                    st.info(f"Fardo: {st.session_state.fila_fardo_temp['Nombre']} | Stock actual: {st.session_state.fila_fardo_temp['Stock_Actual']} unidades")
                     
                     with st.form("form_divisor"):
                         c1, c2 = st.columns(2)
@@ -2650,100 +2656,135 @@ else:
                         costo_unitario = costo_fardo / unidades if unidades > 0 else 0
                         precio_sugerido = ((int((costo_unitario * 1.40) // 100) + 1) * 100)
                         
-                        st.write(f"Costo unitario: ${costo_unitario:,.2f} | Precio Sugerido: ${precio_sugerido:,.0f}")
+                        st.write(f"Costo unitario: `${costo_unitario:,.2f}` | Precio Sugerido: `${precio_sugerido:,.0f}`")
                         
-                        if st.form_submit_button("🚀 Confirmar División"):
+                        # Botón de formulario solicita confirmación
+                        btn_pre_confirmar = st.form_submit_button("🚀 Confirmar División")
+        
+                        if btn_pre_confirmar:
                             if int(fila_fardo['Stock_Actual']) <= 0:
                                 st.error(f"⚠️ ¡Error! El fardo '{fila_fardo['Nombre']}' no cuenta con existencias para dividir.")
-                                st.stop() 
-                            
+                            elif not id_cajita.strip():
+                                st.error("⚠️ Debe ingresar el código de la cajita individual.")
+                            else:
+                                # Guardar parámetros validados para mostrar modal/pantalla de confirmación
+                                st.session_state.pending_division = {
+                                    "id_fardo": id_fardo,
+                                    "fila_fardo": fila_fardo,
+                                    "unidades": int(unidades),
+                                    "id_cajita": id_cajita.strip()
+                                }
+                                st.rerun()
+        
+                    # --- POP-UP / DIÁLOGO DE CONFIRMACIÓN ---
+                    if "pending_division" in st.session_state:
+                        p = st.session_state.pending_division
+                        
+                        st.markdown("---")
+                        st.warning(f"⚠️ **¿Confirmar división del fardo?**\n\n"
+                                   f"- **Fardo:** {p['fila_fardo']['Nombre']} (Se descontará 1 unidad)\n"
+                                   f"- **Cajita destino:** {p['id_cajita']} (Se sumarán {p['unidades']} unidades)")
+                        
+                        col_conf1, col_conf2 = st.columns(2)
+                        
+                        if col_conf1.button("✅ Sí, Ejecutar División", type="primary", key="btn_confirm_div_yes"):
                             try:
                                 # 1. Verificar existencia de la cajita individual
-                                prod_cajita = db.table("PRODUCTOS").select("Stock_Actual", "Nombre").eq("ID_Producto", id_cajita).execute().data
+                                prod_cajita = db.table("PRODUCTOS").select("Stock_Actual", "Nombre").eq("ID_Producto", p['id_cajita']).execute().data
                                 if not prod_cajita:
-                                    st.error("¡Error! El código de la cajita no existe en la base de datos.")
-                                    st.stop()
+                                    st.error("❌ ¡Error! El código de la cajita no existe en la base de datos.")
+                                else:
+                                    usuario_logueado = st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Desconocido')
         
-                                usuario_logueado = st.session_state.get('usuario_nombre') or st.session_state.get('usuario_actual', 'Desconocido')
+                                    # 2. Descuento del Fardo
+                                    stock_fardo_old = int(p['fila_fardo']['Stock_Actual'])
+                                    nuevo_stock_fardo = stock_fardo_old - 1
+                                    db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", p['id_fardo']).execute()
         
-                                # 2. Descuento del Fardo
-                                stock_fardo_old = int(fila_fardo['Stock_Actual'])
-                                nuevo_stock_fardo = stock_fardo_old - 1
-                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_fardo}).eq("ID_Producto", id_fardo).execute()
+                                    # 3. Incremento de la Cajita Individual
+                                    stock_cajita_old = int(prod_cajita[0]['Stock_Actual'])
+                                    nombre_cajita = prod_cajita[0].get('Nombre', 'Cajita Individual')
+                                    nuevo_stock_cajita = stock_cajita_old + p['unidades']
+                                    db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_cajita}).eq("ID_Producto", p['id_cajita']).execute()
         
-                                # 3. Incremento de la Cajita Individual
-                                stock_cajita_old = int(prod_cajita[0]['Stock_Actual'])
-                                nombre_cajita = prod_cajita[0].get('Nombre', 'Cajita Individual')
-                                nuevo_stock_cajita = stock_cajita_old + int(unidades)
-                                db.table("PRODUCTOS").update({"Stock_Actual": nuevo_stock_cajita}).eq("ID_Producto", id_cajita).execute()
+                                    # 4. Registrar en Tabla CAMBIOS (Fardo)
+                                    db.table("CAMBIOS").insert({
+                                        "Fecha": datetime.now().isoformat(),
+                                        "Usuario": str(usuario_logueado),
+                                        "Código": p['id_fardo'],
+                                        "Nombre": p['fila_fardo']['Nombre'],
+                                        "Descripción": f"División de fardo: Se transformó en {p['unidades']} unidades de {p['id_cajita']}",
+                                        "Entra": 0, "Sale": 1,
+                                        "existencia_ant": stock_fardo_old,
+                                        "existencia_actual": nuevo_stock_fardo
+                                    }).execute()
         
-                                # 4. Registrar en Tabla CAMBIOS (Fardo)
-                                db.table("CAMBIOS").insert({
-                                    "Fecha": datetime.now().isoformat(),
-                                    "Usuario": str(usuario_logueado),
-                                    "Código": id_fardo,
-                                    "Nombre": fila_fardo['Nombre'],
-                                    "Descripción": f"División de fardo: Se transformó en {unidades} unidades de {id_cajita}",
-                                    "Entra": 0, "Sale": 1,
-                                    "existencia_ant": stock_fardo_old,
-                                    "existencia_actual": nuevo_stock_fardo
-                                }).execute()
-                                
-                                # 5. Registrar en Tabla CAMBIOS (Cajita)
-                                db.table("CAMBIOS").insert({
-                                    "Fecha": datetime.now().isoformat(),
-                                    "Usuario": str(usuario_logueado),
-                                    "Código": id_cajita,
-                                    "Nombre": nombre_cajita,
-                                    "Descripción": f"Ingreso por división de fardo {id_fardo}",
-                                    "Entra": int(unidades), "Sale": 0,
-                                    "existencia_ant": stock_cajita_old,
-                                    "existencia_actual": nuevo_stock_cajita
-                                }).execute()
+                                    # 5. Registrar en Tabla CAMBIOS (Cajita)
+                                    db.table("CAMBIOS").insert({
+                                        "Fecha": datetime.now().isoformat(),
+                                        "Usuario": str(usuario_logueado),
+                                        "Código": p['id_cajita'],
+                                        "Nombre": nombre_cajita,
+                                        "Descripción": f"Ingreso por división de fardo {p['id_fardo']}",
+                                        "Entra": p['unidades'], "Sale": 0,
+                                        "existencia_ant": stock_cajita_old,
+                                        "existencia_actual": nuevo_stock_cajita
+                                    }).execute()
         
-                                # 6. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX) - FARDO (SALIDA)
-                                db.table("MOVIMIENTOS_STOCK").insert({
-                                    "id_producto": str(id_fardo),
-                                    "nombre_producto": str(fila_fardo['Nombre']),
-                                    "tipo_movimiento": "DIVISIÓN FARDO (SALIDA)",
-                                    "cantidad": -1,
-                                    "stock_anterior": stock_fardo_old,
-                                    "stock_nuevo": nuevo_stock_fardo,
-                                    "origen_referencia": f"División en {unidades} uds de Cajita (ID: {id_cajita})",
-                                    "usuario": str(usuario_logueado)
-                                }).execute()
+                                    # 6. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX) - FARDO
+                                    db.table("MOVIMIENTOS_STOCK").insert({
+                                        "id_producto": str(p['id_fardo']),
+                                        "nombre_producto": str(p['fila_fardo']['Nombre']),
+                                        "tipo_movimiento": "DIVISIÓN FARDO (SALIDA)",
+                                        "cantidad": -1,
+                                        "stock_anterior": stock_fardo_old,
+                                        "stock_nuevo": nuevo_stock_fardo,
+                                        "origen_referencia": f"División en {p['unidades']} uds de Cajita (ID: {p['id_cajita']})",
+                                        "usuario": str(usuario_logueado)
+                                    }).execute()
         
-                                # 7. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX) - CAJITA (ENTRADA)
-                                db.table("MOVIMIENTOS_STOCK").insert({
-                                    "id_producto": str(id_cajita),
-                                    "nombre_producto": str(nombre_cajita),
-                                    "tipo_movimiento": "DIVISIÓN FARDO (ENTRADA)",
-                                    "cantidad": int(unidades),
-                                    "stock_anterior": stock_cajita_old,
-                                    "stock_nuevo": nuevo_stock_cajita,
-                                    "origen_referencia": f"Ingreso por división de Fardo (ID: {id_fardo})",
-                                    "usuario": str(usuario_logueado)
-                                }).execute()
-                                
-                                # 8. Log de Auditoría
-                                log_auditoria(
-                                    tabla="PRODUCTOS",
-                                    accion="UPDATE",
-                                    id_entidad=id_fardo,
-                                    detalles={
-                                        "operacion": "Divisor de Fardos",
-                                        "fardo": {"id": id_fardo, "nombre": fila_fardo['Nombre'], "stock_nuevo": nuevo_stock_fardo},
-                                        "cajita": {"id": id_cajita, "nombre": nombre_cajita, "unidades_ingresadas": int(unidades), "stock_nuevo": nuevo_stock_cajita}
-                                    },
-                                    usuario=usuario_logueado
-                                )
-                                
-                                st.success(f"✅ ¡División realizada por {usuario_logueado}!")
-                                if 'df_prod' in st.session_state: del st.session_state['df_prod']
-                                st.rerun()
-                                
+                                    # 7. REGISTRO EN MOVIMIENTOS_STOCK (KARDEX) - CAJITA
+                                    db.table("MOVIMIENTOS_STOCK").insert({
+                                        "id_producto": str(p['id_cajita']),
+                                        "nombre_producto": str(nombre_cajita),
+                                        "tipo_movimiento": "DIVISIÓN FARDO (ENTRADA)",
+                                        "cantidad": p['unidades'],
+                                        "stock_anterior": stock_cajita_old,
+                                        "stock_nuevo": nuevo_stock_cajita,
+                                        "origen_referencia": f"Ingreso por división de Fardo (ID: {p['id_fardo']})",
+                                        "usuario": str(usuario_logueado)
+                                    }).execute()
+        
+                                    # 8. Log de Auditoría
+                                    log_auditoria(
+                                        tabla="PRODUCTOS",
+                                        accion="UPDATE",
+                                        id_entidad=p['id_fardo'],
+                                        detalles={
+                                            "operacion": "Divisor de Fardos",
+                                            "fardo": {"id": p['id_fardo'], "nombre": p['fila_fardo']['Nombre'], "stock_nuevo": nuevo_stock_fardo},
+                                            "cajita": {"id": p['id_cajita'], "nombre": nombre_cajita, "unidades_ingresadas": p['unidades'], "stock_nuevo": nuevo_stock_cajita}
+                                        },
+                                        usuario=usuario_logueado
+                                    )
+        
+                                    # Guardar mensaje de éxito para mostrarlo post-rerun
+                                    st.session_state.msg_division_exitosa = f"🎉 **¡División Exitosa!** Se descontó 1 fardo '{p['fila_fardo']['Nombre']}' y se acreditaron {p['unidades']} unidades a '{nombre_cajita}'."
+                                    
+                                    # Limpieza de estados y caché
+                                    del st.session_state['pending_division']
+                                    if 'df_prod' in st.session_state: 
+                                        del st.session_state['df_prod']
+                                    
+                                    st.rerun()
+        
                             except Exception as e:
                                 st.error(f"Error al procesar la división: {e}")
+        
+                        if col_conf2.button("❌ Cancelar", key="btn_confirm_div_no"):
+                            del st.session_state['pending_division']
+                            st.rerun()
+                    
         # --- PESTAÑA INVENTARIO (NUEVA) ---
         with tab_inventario:
             st.subheader("📋 Módulo de Toma de Inventarios")
