@@ -3965,11 +3965,175 @@ else:
         if st.session_state.ver_historial:
             st.subheader("🗄️ Gabinete de Gestión de Compras")
             tab_facturas, tab_ordenes = st.tabs(["📄 Facturas", "📝 Órdenes de Compra"])
-
+        
             with tab_facturas:
                 df_hist = pd.DataFrame(db.table("COMPRAS_CABECERA").select("*").execute().data)
-                if not df_hist.empty: st.dataframe(df_hist, width='stretch')
-                else: st.info("No hay facturas.")
+                
+                if not df_hist.empty:
+                    # Aseguramos el formato adecuado para las columnas necesarias
+                    if 'Fecha' in df_hist.columns:
+                        df_hist['Fecha_dt'] = pd.to_datetime(df_hist['Fecha'], errors='coerce')
+                    else:
+                        df_hist['Fecha_dt'] = pd.NaT
+        
+                    df_hist['Total_Compra_num'] = pd.to_numeric(df_hist['Total_Compra'], errors='coerce').fillna(0)
+        
+                    # ==========================================
+                    # 🔍 SECCIÓN DE FILTROS (EXPANDER)
+                    # ==========================================
+                    with st.expander("🔍 Filtros de Búsqueda Avanzada", expanded=False):
+                        col_f1, col_f2, col_f3 = st.columns(3)
+                        
+                        with col_f1:
+                            filtro_id = st.text_input("ID Compra contiene:", value="")
+                            
+                            # Filtro de Rango de Fechas
+                            min_date = df_hist['Fecha_dt'].min()
+                            max_date = df_hist['Fecha_dt'].max()
+                            
+                            if pd.notna(min_date) and pd.notna(max_date):
+                                filtro_fecha = st.date_input(
+                                    "Rango de Fechas:",
+                                    value=(min_date.date(), max_date.date()),
+                                    key="f_fecha_facturas"
+                                )
+                            else:
+                                filtro_fecha = None
+        
+                        with col_f2:
+                            proveedores_unique = ["Todos"] + list(df_hist['Proveedor'].dropna().unique())
+                            filtro_prov = st.selectbox("Proveedor:", proveedores_unique)
+                            
+                            filtro_nro_fact = st.text_input("Nro Factura contiene:", value="")
+        
+                        with col_f3:
+                            metodos_unique = ["Todos"] + list(df_hist['Metodo_Pago'].dropna().unique())
+                            filtro_metodo = st.selectbox("Método de Pago:", metodos_unique)
+                            
+                            val_min_tot = float(df_hist['Total_Compra_num'].min())
+                            val_max_tot = float(df_hist['Total_Compra_num'].max())
+                            
+                            if val_min_tot < val_max_tot:
+                                filtro_total = st.slider(
+                                    "Rango de Total ($):",
+                                    min_value=val_min_tot,
+                                    max_value=val_max_tot,
+                                    value=(val_min_tot, val_max_tot)
+                                )
+                            else:
+                                filtro_total = (val_min_tot, val_max_tot)
+        
+                    # ==========================================
+                    # 🧹 APLICACIÓN DE FILTROS AL DATAFRAME
+                    # ==========================================
+                    df_filtrado = df_hist.copy()
+        
+                    # 1. Filtro ID
+                    if filtro_id.strip():
+                        df_filtrado = df_filtrado[df_filtrado['ID_Compra'].astype(str).str.contains(filtro_id.strip(), case=False, na=False)]
+        
+                    # 2. Filtro Fecha
+                    if filtro_fecha and isinstance(filtro_fecha, (tuple, list)) and len(filtro_fecha) == 2:
+                        f_inicio, f_fin = filtro_fecha
+                        df_filtrado = df_filtrado[
+                            (df_filtrado['Fecha_dt'].dt.date >= f_inicio) & 
+                            (df_filtrado['Fecha_dt'].dt.date <= f_fin)
+                        ]
+        
+                    # 3. Filtro Proveedor
+                    if filtro_prov != "Todos":
+                        df_filtrado = df_filtrado[df_filtrado['Proveedor'] == filtro_prov]
+        
+                    # 4. Filtro Nro Factura
+                    if filtro_nro_fact.strip():
+                        df_filtrado = df_filtrado[df_filtrado['Nro_Factura'].astype(str).str.contains(filtro_nro_fact.strip(), case=False, na=False)]
+        
+                    # 5. Filtro Método de Pago
+                    if filtro_metodo != "Todos":
+                        df_filtrado = df_filtrado[df_filtrado['Metodo_Pago'] == filtro_metodo]
+        
+                    # 6. Filtro Total
+                    df_filtrado = df_filtrado[
+                        (df_filtrado['Total_Compra_num'] >= filtro_total[0]) & 
+                        (df_filtrado['Total_Compra_num'] <= filtro_total[1])
+                    ]
+        
+                    # ==========================================
+                    # 📊 RENDERIZADO DE LA TABLA
+                    # ==========================================
+                    st.caption(f"Mostrando **{len(df_filtrado)}** de **{len(df_hist)}** facturas encontradas.")
+        
+                    if not df_filtrado.empty:
+                        # Encabezados estilo tabla
+                        h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 2, 2, 2, 2, 2, 2])
+                        h1.markdown("**ID Compra**")
+                        h2.markdown("**Fecha**")
+                        h3.markdown("**Proveedor**")
+                        h4.markdown("**Nro Factura**")
+                        h5.markdown("**Método Pago**")
+                        h6.markdown("**Total**")
+                        h7.markdown("**Acción**")
+                        st.divider()
+        
+                        # Renderizamos cada compra filtrada como una fila interactiva
+                        for _, row in df_filtrado.iterrows():
+                            id_compra = str(row['ID_Compra'])
+                            
+                            with st.container():
+                                c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 2, 2, 2, 2, 2])
+                                
+                                c1.write(f"`{id_compra}`")
+                                c2.write(str(row.get('Fecha', '')))
+                                c3.write(str(row.get('Proveedor', '')))
+                                c4.write(str(row.get('Nro_Factura', '')))
+                                c5.write(str(row.get('Metodo_Pago', '')))
+                                c6.write(f"${float(row.get('Total_Compra', 0) or 0):,.2f}")
+                                
+                                # Botón directo al lado de la fila
+                                if c7.button("📲 Copiar", key=f"btn_copiar_{id_compra}"):
+                                    try:
+                                        # Obtenemos productos de la factura
+                                        det_compra = db.table("DETALLE_COMPRAS").select("ID_Producto").eq("ID_Compra", id_compra).execute().data
+                                        
+                                        if det_compra:
+                                            ids_prods = [str(x['ID_Producto']) for x in det_compra]
+                                            
+                                            # Obtenemos catálogo
+                                            prods_db = db.table("PRODUCTOS").select("ID_Producto, Nombre, Precio_1, Precio_2, Precio_3").in_("ID_Producto", ids_prods).execute().data
+                                            
+                                            if prods_db:
+                                                texto_wsp = f"📦 *¡INGRESO DE MERCADERÍA!* 📦\n\n"
+                                                for p in prods_db:
+                                                    nom = p.get('Nombre', 'Producto Sin Nombre')
+                                                    p1 = float(p.get('Precio_1', 0) or 0)
+                                                    p2 = float(p.get('Precio_2', 0) or 0)
+                                                    p3 = float(p.get('Precio_3', 0) or 0)
+                                                    
+                                                    texto_wsp += f"🔹 *{nom}*\n"
+                                                    texto_wsp += f"   • P1: ${p1:,.0f} | P2: ${p2:,.0f} | P3: ${p3:,.0f}\n\n"
+                                                
+                                                st.session_state["texto_vendedor_activo"] = texto_wsp
+                                                st.session_state["factura_activa_id"] = id_compra
+                                            else:
+                                                st.error("No se encontraron los productos en el catálogo.")
+                                        else:
+                                            st.error("Esta factura no tiene detalle de productos asociado.")
+                                    except Exception as e:
+                                        st.error(f"Error al obtener el detalle: {e}")
+        
+                        # Si se presionó el botón de alguna fila, mostramos el cuadro copiable abajo
+                        if "texto_vendedor_activo" in st.session_state:
+                            st.divider()
+                            st.success(f"✅ Texto generado para la factura `{st.session_state.get('factura_activa_id')}`:")
+                            st.text_area(
+                                "📋 Copiar para WhatsApp (Ctrl + C / Ctrl + V):", 
+                                value=st.session_state["texto_vendedor_activo"], 
+                                height=220
+                            )
+                    else:
+                        st.warning("No se encontraron facturas que coincidan con los filtros aplicados.")
+                else:
+                    st.info("No hay facturas.")
 
             with tab_ordenes:
                 df_oc = pd.DataFrame(db.table("ORDENES_COMPRA").select("*").execute().data)
