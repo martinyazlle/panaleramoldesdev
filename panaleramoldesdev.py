@@ -3605,7 +3605,7 @@ else:
                 placeholder="Ej: pampers, babydry, 779...",
                 key="busqueda_texto_abc"
             )
-    
+        
             # Filtros de menú desplegable
             fa1, fa2, fa3 = st.columns(3)
             p_rubro = fa1.selectbox("Rubro", rubros, key="p_rubro_abc")
@@ -3613,39 +3613,39 @@ else:
             p_prov = fa3.selectbox("Proveedor", provs, key="p_prov_abc")
             
             dias_analisis = st.slider("Días de historia de ventas para scoring:", min_value=15, max_value=90, value=60, step=15, key="slider_dias_abc")
-    
+        
             # Cargar detalles de ventas
             res_vd = db.table("VENTAS_DETALLE").select("ID_Producto, Cantidad, Subtotal, Precio_Costo_Unitario").execute().data
             df_vd = pd.DataFrame(res_vd) if res_vd else pd.DataFrame()
-    
+        
             df_ranking = df_prod.copy()
             
             # 1. Filtro: Productos Inactivos
             if 'Estado' in df_ranking.columns:
                 df_ranking = df_ranking[df_ranking['Estado'] != 'INACTIVO']
-    
+        
             # 2. Filtro: Solo productos stockeables (Es_Stockeable == True)
             if 'Es_Stockeable' in df_ranking.columns:
                 df_ranking = df_ranking[df_ranking['Es_Stockeable'] == True]
-    
+        
             # 3. Filtro de negocio: Rubro LECHE solo con presentaciones bulto/pack (" x12", " x24", " x30", " x400", " x800", " x1000", " x1200")
             if 'Rubro' in df_ranking.columns and 'Nombre' in df_ranking.columns:
                 es_leche = df_ranking['Rubro'].astype(str).str.upper() == 'LECHE'
                 contiene_bulto = df_ranking['Nombre'].astype(str).str.contains(' x12| x24| x30| x400| x800| x1000| x1200', case=False, na=False)
                 df_ranking = df_ranking[~es_leche | contiene_bulto]
-    
+        
             # Limpieza de numéricos
             df_ranking['Stock_Actual'] = pd.to_numeric(df_ranking['Stock_Actual'], errors='coerce').fillna(0)
             df_ranking['Stock_Min'] = pd.to_numeric(df_ranking['Stock_Min'], errors='coerce').fillna(0)
             df_ranking['Stock_Max'] = pd.to_numeric(df_ranking['Stock_Max'], errors='coerce').fillna(0)
-    
+        
             # 4. Aplicación del Buscador por Texto
             if busqueda_abc:
                 b_txt = busqueda_abc.lower()
                 mask_abc = df_ranking['Nombre'].astype(str).str.lower().str.contains(b_txt, na=False) | \
                            df_ranking['ID_Producto'].astype(str).str.lower().str.contains(b_txt, na=False)
                 df_ranking = df_ranking[mask_abc]
-    
+        
             # 5. Aplicación de filtros interactivos del usuario (Rubro, Marca, Proveedor)
             if p_rubro != "Todos":
                 df_ranking = df_ranking[df_ranking['Rubro'] == p_rubro]
@@ -3659,7 +3659,7 @@ else:
                     if not prov_sel_abc.empty:
                         id_p_abc = prov_sel_abc.iloc[0]['ID_Proveedor']
                         df_ranking = df_ranking[df_ranking['ID_Proveedor'] == id_p_abc]
-    
+        
             if df_ranking.empty:
                 st.info("No se encontraron productos con los criterios, texto y filtros seleccionados.")
             else:
@@ -3669,7 +3669,7 @@ else:
                     df_vd['Subtotal'] = pd.to_numeric(df_vd['Subtotal'], errors='coerce').fillna(0)
                     df_vd['Precio_Costo_Unitario'] = pd.to_numeric(df_vd['Precio_Costo_Unitario'], errors='coerce').fillna(0)
                     df_vd['Ganancia_Real'] = df_vd['Subtotal'] - (df_vd['Cantidad'] * df_vd['Precio_Costo_Unitario'])
-    
+        
                     # Agrupado por producto
                     agrupado = df_vd.groupby('ID_Producto').agg({
                         'Cantidad': 'sum',
@@ -3689,23 +3689,23 @@ else:
                     df_ranking['Rotacion_Unid'] = 0
                     df_ranking['Facturacion_Total'] = 0.0
                     df_ranking['Ganancia_Total'] = 0.0
-    
+        
                 df_ranking['Rotacion_Unid'] = df_ranking['Rotacion_Unid'].fillna(0)
                 df_ranking['Facturacion_Total'] = df_ranking['Facturacion_Total'].fillna(0.0)
                 df_ranking['Ganancia_Total'] = df_ranking['Ganancia_Total'].fillna(0.0)
-    
+        
                 # Normalización y Cálculo de Score Multi-criterio
                 max_rot = df_ranking['Rotacion_Unid'].max()
                 max_fact = df_ranking['Facturacion_Total'].max()
                 max_gan = df_ranking['Ganancia_Total'].max()
-    
+        
                 norm_rot = (df_ranking['Rotacion_Unid'] / max_rot * 100) if max_rot > 0 else 0
                 norm_fact = (df_ranking['Facturacion_Total'] / max_fact * 100) if max_fact > 0 else 0
                 norm_gan = (df_ranking['Ganancia_Total'] / max_gan * 100) if max_gan > 0 else 0
-    
+        
                 # Score = 40% Facturación + 35% Rotación + 25% Ganancia
                 df_ranking['Score_Comercial'] = (0.40 * norm_fact) + (0.35 * norm_rot) + (0.25 * norm_gan)
-    
+        
                 # Asignación de Categoría ABC
                 def asignar_categoria(score, p70, p30):
                     if score >= p70 and score > 0:
@@ -3714,12 +3714,12 @@ else:
                         return "🟡 Categoría B"
                     else:
                         return "🔴 Categoría C"
-    
+        
                 p70 = df_ranking['Score_Comercial'].quantile(0.70)
                 p30 = df_ranking['Score_Comercial'].quantile(0.30)
                 
                 df_ranking['Categoria_ABC'] = df_ranking['Score_Comercial'].apply(lambda x: asignar_categoria(x, p70, p30))
-    
+        
                 # Cálculo de Urgencia y Faltantes
                 df_ranking['Faltante_Min'] = (df_ranking['Stock_Min'] - df_ranking['Stock_Actual']).clip(lower=0)
                 
@@ -3727,9 +3727,9 @@ else:
                     if row['Stock_Min'] > 0 and row['Faltante_Min'] > 0:
                         return (row['Faltante_Min'] / row['Stock_Min']) * 100
                     return 0.0
-    
+        
                 df_ranking['Urgencia_%'] = df_ranking.apply(calc_urgencia, axis=1)
-    
+        
                 # Ordenamiento: Primero Categoría ABC (A->B->C) y luego Urgencia descendente
                 df_ranking['Orden_Cat'] = df_ranking['Categoria_ABC'].map({
                     "🟢 Categoría A": 1,
@@ -3741,16 +3741,16 @@ else:
                     by=['Orden_Cat', 'Urgencia_%', 'Score_Comercial'], 
                     ascending=[True, False, False]
                 ).reset_index(drop=True)
-    
+        
                 # Selección por defecto: Tildar automáticamente los productos con Urgencia > 0%
                 df_ranking['Pedir'] = df_ranking['Urgencia_%'] > 0
                 
                 cols_abc_mostrar = ['Pedir', 'Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Stock_Min', 'Faltante_Min', 'Score_Comercial']
                 cols_abc_presentes = [c for c in cols_abc_mostrar if c in df_ranking.columns]
-    
+        
                 st.markdown("---")
                 st.caption("📌 Los artículos con stock por debajo del mínimo vienen tildados automáticamente. Podés destildar o sumar los que desees.")
-    
+        
                 df_abc_editado = st.data_editor(
                     df_ranking[cols_abc_presentes],
                     column_config={
@@ -3768,7 +3768,7 @@ else:
                     use_container_width=True,
                     key="editor_tabla_abc"
                 )
-    
+        
                 col_abc_wsp, col_abc_exp = st.columns(2)
                 
                 if col_abc_wsp.button("💬 Generar WhatsApp Priorizado", type="primary", key="btn_wsp_abc"):
@@ -3791,18 +3791,26 @@ else:
                             msg_abc += f"{cant_comprar} {unid_texto} *{r['Nombre']}*\n"
                         
                         st.text_area("Copiar mensaje para proveedor:", value=msg_abc, height=220, key="txt_area_abc")
-    
-                buffer_abc = io.BytesIO()
-                with pd.ExcelWriter(buffer_abc, engine='xlsxwriter') as writer_abc:
-                    df_ranking.drop(columns=['Pedir', 'Orden_Cat'], errors='ignore').to_excel(writer_abc, index=False)
-                
-                col_abc_exp.download_button(
-                    label="📥 Exportar Ranking ABC (Excel)",
-                    data=buffer_abc.getvalue(),
-                    file_name="ranking_priorizacion_stock.xlsx",
-                    mime="application/vnd.ms-excel",
-                    key="btn_exp_excel_abc"
-                )
+        
+                # ==========================================
+                # 📥 GENERACIÓN DE EXCEL (SOLO URGENCIA > 0%)
+                # ==========================================
+                df_export_excel = df_ranking[df_ranking['Urgencia_%'] > 0].drop(columns=['Pedir', 'Orden_Cat'], errors='ignore')
+        
+                if not df_export_excel.empty:
+                    buffer_abc = io.BytesIO()
+                    with pd.ExcelWriter(buffer_abc, engine='xlsxwriter') as writer_abc:
+                        df_export_excel.to_excel(writer_abc, index=False)
+                    
+                    col_abc_exp.download_button(
+                        label=f"📥 Exportar Recomendados ({len(df_export_excel)}) a Excel",
+                        data=buffer_abc.getvalue(),
+                        file_name="productos_recomendados_compra.xlsx",
+                        mime="application/vnd.ms-excel",
+                        key="btn_exp_excel_abc"
+                    )
+                else:
+                    col_abc_exp.info("🟢 No hay productos con urgencia mayor al 0% para exportar.")
 
     # =====================================================================
     # MODULO: 🚚 PROVEEDORES
