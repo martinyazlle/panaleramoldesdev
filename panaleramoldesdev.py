@@ -13,6 +13,7 @@ import numpy as np
 from math import radians, cos, sin, asin, sqrt
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
+from modulos import reportes
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
@@ -1061,7 +1062,7 @@ else:
                 "🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", 
                 "⚙️ Configuración Pagos", "📦 Productos",
                 "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", 
-                "⚙️ Auditoría", "📈 Reporte de Utilidades", "🚚 Gestión de Repartos" # <--- AQUÍ LO AGREGAMOS
+                "⚙️ Auditoría", "📈 Reporte de Utilidades", "🚚 Gestión de Repartos", "📊 Reportes" # <--- AQUÍ LO AGREGAMOS
             ])
         elif st.session_state.rol == "Vendedor":
             opciones_disponibles.extend(["🛒 Punto de Venta", "🚚 Gestión de Repartos", "📦 Productos", "👥 Clientes"])
@@ -4853,4 +4854,10 @@ else:
                         if pd.notna(obs_entrega) and str(obs_entrega).strip() and str(obs_entrega).strip().lower() not in ["nan", "none"]:
                             st.info(f"📝 **Nota para el repartidor:** {obs_entrega}", icon="📌")
                         
-                        st.caption(f"💰 {v['Metodo_Pago']}")    
+                        st.caption(f"💰 {v['Metodo_Pago']}")
+
+    # =====================================================================
+    # MODULO: 📊 REPORTES
+    # =====================================================================
+    elif menu == "📊 Reportes":
+        reportes.render_reportes(db)
