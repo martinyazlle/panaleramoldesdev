@@ -1154,7 +1154,8 @@ else:
         with tab_explorar:
             # Carga datos
             try:
-                res_caja = db.table("CAJA").select("*").execute()
+                # 1. Agregamos order("Fecha", desc=True) para traerlos ordenados desde la base de datos
+                res_caja = db.table("CAJA").select("*").order("Fecha", desc=True).execute()
                 df_caja = pd.DataFrame(res_caja.data)
             except Exception:
                 df_caja = pd.DataFrame()
@@ -1163,7 +1164,8 @@ else:
             
             if not df_caja.empty:
                 df_caja['Fecha'] = pd.to_datetime(df_caja['Fecha'])
-                df_filtrado = df_caja[df_caja['Fecha'].dt.date == fecha_sel]
+                # 2. Filtración y ordenamiento explícito (de más reciente a más antiguo)
+                df_filtrado = df_caja[df_caja['Fecha'].dt.date == fecha_sel].sort_values(by="Fecha", ascending=False)
             else:
                 df_filtrado = pd.DataFrame() # Tabla vacía si no hay datos
 
