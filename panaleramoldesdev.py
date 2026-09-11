@@ -3567,49 +3567,6 @@ else:
     # =====================================================================
     elif menu == "📦 Stock":
         st.header("📊 Gestión y Análisis de Stock")
-
-        # =====================================================================
-        # HERRAMIENTA TEMPORAL DE MIGRACIÓN (ELIMINAR LUEGO DE USAR)
-        # =====================================================================
-        with st.expander("🛠️ Herramientas de Mantenimiento / Mantenimiento DB", expanded=False):
-            st.warning("⚠️ Esta acción actualizará la columna ID_Proveedor en Supabase para todos los productos con historial de compras.")
-            if st.button("🔄 Migrar y Concatenar Proveedores Históricos en Supabase"):
-                with st.spinner("Analizando historial de compras y actualizando la base de datos..."):
-                    # 1. Traer datos de compras y detalle
-                    res_cc = db.table("COMPRAS_CABECERA").select("ID_Compra, Proveedor").execute().data
-                    res_dc = db.table("DETALLE_COMPRAS").select("ID_Compra, ID_Producto").execute().data
-                    
-                    df_cc = pd.DataFrame(res_cc) if res_cc else pd.DataFrame()
-                    df_dc = pd.DataFrame(res_dc) if res_dc else pd.DataFrame()
-    
-                    if not df_cc.empty and not df_dc.empty:
-                        # Normalizar tipos para el cruce
-                        df_cc['ID_Compra'] = df_cc['ID_Compra'].astype(str)
-                        df_dc['ID_Compra'] = df_dc['ID_Compra'].astype(str)
-                        df_dc['ID_Producto'] = df_dc['ID_Producto'].astype(str)
-                        df_cc['Proveedor'] = df_cc['Proveedor'].astype(str)
-    
-                        # Cruzar Detalle con Cabecera
-                        df_rel = pd.merge(df_dc, df_cc[['ID_Compra', 'Proveedor']], on='ID_Compra', how='inner')
-    
-                        # Agrupar nombres de proveedores únicos por ID_Producto
-                        agrupado_provs = df_rel.groupby('ID_Producto')['Proveedor'].unique()
-    
-                        # Actualizar cada producto en la tabla PRODUCTOS en Supabase
-                        actualizados = 0
-                        for id_prod, lista_provs in agrupado_provs.items():
-                            provs_limpios = sorted(list(set([str(p).strip() for p in lista_provs if str(p).strip() and str(p).strip().lower() != 'none'])))
-                            cadena_provs = ", ".join(provs_limpios)
-    
-                            if cadena_provs:
-                                db.table("PRODUCTOS").update({"ID_Proveedor": cadena_provs}).eq("ID_Producto", id_prod).execute()
-                                actualizados += 1
-    
-                        st.success(f"¡Migración exitosa! Se actualizaron {actualizados} productos en Supabase.")
-                        st.rerun()
-                    else:
-                        st.warning("No hay suficientes datos en COMPRAS_CABECERA o DETALLE_COMPRAS para procesar la migración.")
-        # =====================================================================
     
         # Carga base de datos de productos y proveedores
         df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
