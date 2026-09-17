@@ -5104,7 +5104,7 @@ else:
         
         # Cargar puntos guardados desde Supabase
         puntos_db = cargar_puntos_reparto()
-    
+        
         # Obtenemos ventas pendientes de reparto
         ventas_reparto = db.table("VENTAS_PENDIENTES") \
                             .select("*") \
@@ -5123,20 +5123,25 @@ else:
             st.divider()
             
             rol_usuario = st.session_state.get('rol', 'Vendedor')
+            es_admin = (rol_usuario == "Administrador")
             
             for fecha, grupo in df.groupby('Fecha_Entrega'):
-                st.subheader(f"📅 {fecha} ({len(grupo)})")
+                st.subheader(f"📅 {fecha} ({len(grupo)} entregas)")
                 
-                if rol_usuario == "Administrador":
-                    with st.expander(f"⚙️ Configurar Origen y Destino para {fecha}"):
+                # Inicializamos lista de paradas intermedias en session_state si no existe
+                key_paradas = f"paradas_intermedias_{fecha}"
+                if key_paradas not in st.session_state:
+                    st.session_state[key_paradas] = []
+
+                # --- CONFIGURACIÓN Y OPTIMIZACIÓN (SOLO ADMINISTRADOR) ---
+                if es_admin:
+                    with st.expander(f"⚙️ Configuración de Ruta y Paradas Intermedias ({fecha})"):
                         c_origen, c_destino = st.columns(2)
                         
                         # --- CONFIGURACIÓN ORIGEN ---
                         with c_origen:
                             st.markdown("**📍 Punto de Partida**")
-                            # Armamos las opciones mezclando los puntos de la BD + la opción de Link
                             opciones_origen = {**puntos_db, "Otro (Link de Maps)": "link"}
-                            
                             sel_origen = st.selectbox(
                                 "¿Desde dónde sale el reparto?", 
                                 list(opciones_origen.keys()), 
@@ -5157,17 +5162,13 @@ else:
                                     punto_partida = list(puntos_db.values())[0]
                             else:
                                 punto_partida = opciones_origen[sel_origen]
-    
+                        
                         # --- CONFIGURACIÓN DESTINO FINAL ---
                         with c_destino:
                             st.markdown("**🏁 Punto de Finalización**")
                             opciones_destino = {**puntos_db, "Otro (Link de Maps)": "link"}
-                            
-                            # 1. Definimos dinámicamente el nombre y las coordenadas del punto por defecto (primer punto de la BD)
                             nombre_defecto = list(puntos_db.keys())[0] if puntos_db else "Punto Principal"
                             coords_defecto = list(puntos_db.values())[0] if puntos_db else None
-                        
-                            # Preseleccionamos por defecto la primera opción de la BD (índice 0)
                             index_def = 0
                         
                             sel_destino = st.selectbox(
@@ -5185,28 +5186,108 @@ else:
                                         st.success(f"Destino: {coords_dest}")
                                         punto_llegada = coords_dest
                                     else:
-                                        # 2. Mensaje y fallback totalmente dinámicos
                                         st.error(f"No se pudo leer el link. Se usará {nombre_defecto} por defecto.")
                                         punto_llegada = coords_defecto
                                 else:
                                     punto_llegada = coords_defecto
                             else:
                                 punto_llegada = opciones_destino[sel_destino]
-    
-                    # Botón de optimización
+
+                        st.divider()
+                        
+                        # --- SECCIÓN: AGREGAR PARADAS INTERMEDIAS / RETIROS ---
+                        st.markdown("### 🏬 Agregar Paradas Intermedias (Proveedores / Retiros)")
+                        st.caption("Podés sumar puntos adicionales a la ruta que no son ventas a clientes (ej. retirar mercadería).")
+                        
+                        cp1, cp2, cp3 = st.columns([2, 2, 1])
+                        
+                        nombre_parada = cp1.text_input("Nombre de la Parada:", placeholder="Ej: Retiro Facor / Pampers", key=f"nom_parada_{fecha}")
+                        opciones_parada = {**puntos_db, "Otro (Link de Maps)": "link"}
+                        sel_parada_p = cp2.selectbox("Ubicación de la Parada:", list(opciones_parada.keys()), key=f"sel_parada_{fecha}")
+                        
+                        link_parada_custom = None
+                        if sel_parada_p == "Otro (Link de Maps)":
+                            link_parada_custom = st.text_input("Link de Maps de la parada:", key=f"link_parada_custom_{fecha}")
+
+                        if cp3.button("➕ Añadir Parada", key=f"btn_add_parada_{fecha}", use_container_width=True):
+                            if not nombre_parada:
+                                st.warning("Por favor ingresá un nombre para la parada.")
+                            else:
+                                lat, lon = None, None
+                                link_p = ""
+                                
+                                if sel_parada_p == "Otro (Link de Maps)":
+                                    if link_parada_custom:
+                                        link_p = link_parada_custom
+                                        coords_extraidas = extraer_coords_desde_link(link_parada_custom)
+                                        if coords_extraidas:
+                                            lat, lon = coords_extraidas
+                                else:
+                                    coords_p = opciones_parada[sel_parada_p]
+                                    if coords_p:
+                                        # Si coords_p es una tupla/lista (lat, lon)
+                                        if isinstance(coords_p, (tuple, list)) and len(coords_p) == 2:
+                                            lat, lon = coords_p[0], coords_p[1]
+                                        # Si coords_p es una cadena tipo "-24.123, -65.123"
+                                        elif isinstance(coords_p, str):
+                                            partes = coords_p.split(',')
+                                            if len(partes) == 2:
+                                                lat, lon = float(partes[0].strip()), float(partes[1].strip())
+                                        
+                                        link_p = f"https://www.google.com/maps/search/?api=1&query={lat},{lon}" if lat and lon else ""
+
+                                if lat is not None and lon is not None:
+                                    st.session_state[key_paradas].append({
+                                        "ID_Venta": f"PARADA-{datetime.now().strftime('%M%S')}",
+                                        "Cliente": f"📦 RETIRO: {nombre_parada}",
+                                        "Direccion_Entrega": f"Parada Intermedia ({sel_parada_p})",
+                                        "Link_Maps_Entrega": link_p,
+                                        "Latitud": float(lat),
+                                        "Longitud": float(lon),
+                                        "Metodo_Pago": "OPERACIÓN INTERMEDIA",
+                                        "Observaciones": "Parada agregada manualmente en la ruta.",
+                                        "Forma_Entrega": "Reparto",
+                                        "Fecha_Entrega": fecha,
+                                        "Total": 0
+                                    })
+                                    st.success(f"Parada '{nombre_parada}' agregada con éxito.")
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudieron extraer las coordenadas (Latitud y Longitud) para esta parada.")
+
+                        # Mostrar paradas agregadas para esta fecha (Solo Administrador)
+                        if st.session_state[key_paradas]:
+                            st.write("**Paradas intermedias cargadas para el día:**")
+                            for idx, p_inter in enumerate(st.session_state[key_paradas]):
+                                col_p1, col_p2 = st.columns([4, 1])
+                                col_p1.info(f"📍 **{p_inter['Cliente']}** — {p_inter['Direccion_Entrega']}")
+                                if col_p2.button("🗑️ Quitar", key=f"del_p_{fecha}_{idx}"):
+                                    st.session_state[key_paradas].pop(idx)
+                                    st.rerun()
+
+                    # --- BOTÓN DE OPTIMIZACIÓN (SOLO ADMIN) ---
                     if st.button(f"🚀 Generar Diagrama Optimizado para {fecha}", key=f"btn_{fecha}"):
                         st.session_state[f"mostrar_diagrama_{fecha}"] = True
                         st.session_state[f"p_partida_{fecha}"] = punto_partida
                         st.session_state[f"p_llegada_{fecha}"] = punto_llegada
-                    
-                    # Si la bandera es True, mostramos el mapa interactivo
+
+                    # Mostrar diagrama interactivo
                     if st.session_state.get(f"mostrar_diagrama_{fecha}", False):
                         p_partida = st.session_state.get(f"p_partida_{fecha}", punto_partida)
                         p_llegada = st.session_state.get(f"p_llegada_{fecha}", punto_llegada)
                         
-                        generar_diagrama_optimizada(grupo, p_partida, fecha, punto_destino=p_llegada)
+                        # Combinar ventas del día + paradas intermedias
+                        grupo_completo = grupo.to_dict('records')
+                        paradas_extra = st.session_state.get(key_paradas, [])
+                        
+                        df_ruta_completa = pd.DataFrame(grupo_completo + paradas_extra)
+                        
+                        generar_diagrama_optimizada(df_ruta_completa, p_partida, fecha, punto_destino=p_llegada)
+
+                # --- LISTADO VISUAL DE ENTREGAS ---
+                st.markdown("#### 📋 Puntos de la Ruta")
                 
-                # Iteramos sobre los repartos del día
+                # Renderizar entregas a clientes
                 for _, v in grupo.iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([2, 2, 1])
@@ -5221,6 +5302,17 @@ else:
                             st.info(f"📝 **Nota para el repartidor:** {obs_entrega}", icon="📌")
                         
                         st.caption(f"💰 {v['Metodo_Pago']}")
+
+                # Renderizar paradas intermedias ÚNICAMENTE si el usuario es Administrador
+                if es_admin and st.session_state.get(key_paradas):
+                    for p_int in st.session_state[key_paradas]:
+                        with st.container(border=True):
+                            c1, c2, c3 = st.columns([2, 2, 1])
+                            c1.write(f"🏭 **Parada:** {p_int['Cliente']}")
+                            c2.write(f"📍 **Ubicación:** {p_int['Direccion_Entrega']}")
+                            if p_int.get('Link_Maps_Entrega'):
+                                c3.link_button("📍 Maps", p_int['Link_Maps_Entrega'])
+                            st.caption("⚙️ Parada intermedia (No es venta)")
 
     # =====================================================================
     # MODULO: 📊 REPORTES
