@@ -2405,12 +2405,142 @@ else:
             st.subheader("🔍 Buscador de Productos")
             
             # -------------------------------------------------------------
+            # 🪄 HERRAMIENTA TEMPORAL DE AUTO-CLASIFICACIÓN (SOLO ADMIN)
+            # -------------------------------------------------------------
+            if st.session_state.get('rol') == "Administrador":
+                with st.expander("🛠️ Herramienta de Mantenimiento BD: Auto-clasificar Atributos (Solo Pañales y Leches)"):
+                    st.caption("Aplica la auto-clasificación ÚNICAMENTE a los productos de los rubros: PAÑALES, PAÑALES ADULTOS y LECHE.")
+                    
+                    if st.button("🪄 Ejecutar Auto-clasificación Filtrada", type="secondary", key="btn_run_autoclass"):
+                        import re
+                        
+                        def clasificar_producto(nombre, rubro="", marca=""):
+                            nombre_str = str(nombre).upper().strip()
+                            rubro_str = str(rubro).upper().strip()
+                            marca_str = str(marca).upper().strip()
+                            
+                            linea, talle, tamanio_paquete, tipo = None, None, None, None
+                            etapa, formato_leche, presentacion = None, None, None
+        
+                            # Verificamos pertenencia estricta de rubro
+                            rubros_validos_panal = ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+                            rubros_validos_leche = ["LECHE", "LECHES"]
+                            
+                            es_rubro_panal = any(rubro_str == r for r in rubros_validos_panal)
+                            # Excluimos expresamente "SACALECHES" o "SACALECHE"
+                            es_rubro_leche = any(rubro_str == r for r in rubros_validos_leche) and "SACALECHE" not in rubro_str
+        
+                            if not (es_rubro_panal or es_rubro_leche):
+                                return {
+                                    "Linea": None, "Talle": None, "Tamanio_Paquete": None, "Tipo": None,
+                                    "Etapa": None, "Formato_Leche": None, "Presentacion": None
+                                }
+        
+                            # --- PAÑALES (Bebé y Adulto) ---
+                            if es_rubro_panal:
+                                tipo = "Pants" if ("PANTS" in nombre_str or "PANT" in nombre_str) else "Con Abrojo"
+        
+                                match_talle = re.search(r'\b(PR|RN|XXXG|XXG|XG|JUNIOR|EG|EEG|CH|P|M|G)\b', nombre_str)
+                                if match_talle:
+                                    talle = match_talle.group(1)
+        
+                                marca_ref = marca_str if marca_str else nombre_str.split()[0]
+                                if marca_ref in nombre_str and talle:
+                                    patron_linea = rf'{re.escape(marca_ref)}\s+(.*?)\s+{re.escape(talle)}'
+                                    match_linea = re.search(patron_linea, nombre_str)
+                                    if match_linea:
+                                        texto_intermedio = match_linea.group(1).strip()
+                                        texto_intermedio = re.sub(r'\b(PANTS|PANT|ANATOMICO|ANATOMICOS)\b', '', texto_intermedio).strip()
+                                        linea = texto_intermedio.title() if texto_intermedio else "Clasica"
+                                    else:
+                                        linea = "Clasica"
+                                else:
+                                    linea = "Clasica"
+        
+                                match_cant = re.search(r'X(\d{1,3})\b', nombre_str)
+                                if match_cant:
+                                    cant = int(match_cant.group(1))
+                                    if cant <= 16:
+                                        tamanio_paquete = "Regular"
+                                    elif 20 <= cant <= 50:
+                                        tamanio_paquete = "Hiperpack"
+                                    elif 52 <= cant <= 80:
+                                        tamanio_paquete = "Pack Ahorro"
+                                    elif cant >= 88:
+                                        tamanio_paquete = "Pack Mensual"
+        
+                            # --- LECHES ---
+                            if es_rubro_leche:
+                                # 1. Etapa (1, 2, 3, 4, Escolar, Común)
+                                match_etapa = re.search(r'\b(1|2|3|4)\b', nombre_str)
+                                if match_etapa:
+                                    etapa = f"Etapa {match_etapa.group(1)}"
+                                elif "ESCOLAR" in nombre_str:
+                                    etapa = "Escolar"
+                                else:
+                                    etapa = "Común / Toda la familia"
+        
+                                # 2. Extraemos el volumen / peso del patrón X(número)
+                                match_pres = re.search(r'X(\d{3,4})\b', nombre_str)
+                                val_num = int(match_pres.group(1)) if match_pres else None
+        
+                                # Regla de Formato y Presentación
+                                if "X1LT" in nombre_str or "1LT" in nombre_str:
+                                    formato_leche = "Líquida"
+                                    presentacion = "1 Lt"
+                                elif val_num is not None:
+                                    if val_num == 125:
+                                        formato_leche = "En Polvo"
+                                        presentacion = "125 grs"
+                                    elif val_num in [190, 200, 500] or "LIQUIDA" in nombre_str:
+                                        formato_leche = "Líquida"
+                                        presentacion = f"{val_num} ml"
+                                    else:
+                                        formato_leche = "En Polvo"
+                                        if val_num == 1200:
+                                            presentacion = "1.2 kg"
+                                        elif val_num == 1000:
+                                            presentacion = "1 kg"
+                                        elif val_num in [400, 800]:
+                                            presentacion = f"{val_num} grs"
+                                        else:
+                                            presentacion = f"{val_num} grs" if val_num > 100 else None
+                                else:
+                                    formato_leche = "Líquida" if "LIQUIDA" in nombre_str else "En Polvo"
+                                    presentacion = None
+        
+                            return {
+                                "Linea": linea,
+                                "Talle": talle,
+                                "Tamanio_Paquete": tamanio_paquete,
+                                "Tipo": tipo,
+                                "Etapa": etapa,
+                                "Formato_Leche": formato_leche,
+                                "Presentacion": presentacion
+                            }
+        
+                        with st.spinner("Actualizando únicamente rubros PAÑALES, PAÑALES ADULTOS y LECHE..."):
+                            res = db.table("PRODUCTOS").select("ID_Producto, Nombre, Rubro, Marca").execute()
+                            productos = res.data or []
+                            
+                            procesados = 0
+                            for prod in productos:
+                                id_prod = prod["ID_Producto"]
+                                datos_nuevos = clasificar_producto(prod.get("Nombre", ""), prod.get("Rubro", ""), prod.get("Marca", ""))
+                                db.table("PRODUCTOS").update(datos_nuevos).eq("ID_Producto", id_prod).execute()
+                                procesados += 1
+                            
+                            st.success(f"¡Se actualizó el catálogo completando los 3 rubros con la nueva lógica posicional de líneas!")
+                            if 'df_prod' in st.session_state:
+                                del st.session_state['df_prod']
+                            st.rerun()
+        
+            # -------------------------------------------------------------
             # 0️⃣ CÁLCULO EN TIEMPO REAL DEL STOCK RESERVADO EN PENDIENTES
             # -------------------------------------------------------------
             reservas_map = {}
             try:
                 import json
-                # Traemos solo el Detalle_JSON de los pendientes vigentes
                 res_pend = db.table("VENTAS_PENDIENTES").select("Detalle_JSON").execute().data
                 if res_pend:
                     for pend in res_pend:
@@ -2419,7 +2549,6 @@ else:
                             try:
                                 items = json.loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
                                 for it in items:
-                                    # Soporta 'ID_Producto', 'id_producto' o 'id'
                                     p_id = str(it.get("ID_Producto") or it.get("id_producto") or it.get("id") or "").strip()
                                     cant = float(it.get("cantidad") or it.get("Cantidad") or it.get("cant") or 0)
                                     if p_id and cant > 0:
@@ -2431,11 +2560,8 @@ else:
         
             # --- CONTROLES Y FILTROS RÁPIDOS ---
             c_chk1, c_chk2 = st.columns(2)
-            
-            # 1. Filtro de Stock Disponible > 0 (Tildado por defecto)
             solo_con_stock = c_chk1.checkbox("📦 Solo productos con Stock DISPONIBLE > 0", value=True, key="chk_solo_con_stock")
             
-            # 2. Mostrar Inactivos (Solo disponible para Administradores)
             mostrar_inactivos = False
             if st.session_state.rol == "Administrador":
                 mostrar_inactivos = c_chk2.checkbox("👁️ Mostrar productos INACTIVOS", value=False, key="chk_inactivos")
@@ -2447,14 +2573,89 @@ else:
             )
             
             c1, c2 = st.columns(2)
-            rubros = ["Todos"] + [r for r in st.session_state.df_prod['Rubro'].dropna().unique().tolist() if r]
-            marcas = ["Todos"] + [m for m in st.session_state.df_prod['Marca'].dropna().unique().tolist() if m]
-            
+            df_base = st.session_state.df_prod
+        
+            # --- LÓGICA Y ORDENAMIENTO DE FILTROS ---
+        
+            # 1. Rubros (Alfabéticamente)
+            rubros = ["Todos"] + sorted([r for r in df_base['Rubro'].dropna().unique().tolist() if str(r).strip()])
+        
+            # 2. Marcas (Alfabéticamente)
+            marcas = ["Todos"] + sorted([m for m in df_base['Marca'].dropna().unique().tolist() if str(m).strip()])
+        
+            # 3. Talle (Orden específico: PR, RN, RN+, P, M, G, XG, XXG, XXXG, Junior, CH, EG, EEG)
+            orden_talles_ref = ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "JUNIOR", "CH", "EG", "EEG"]
+            raw_talles = [t for t in df_base.get('Talle', pd.Series()).dropna().unique().tolist() if str(t).strip()]
+            talles_ordenados = sorted(raw_talles, key=lambda x: orden_talles_ref.index(str(x).upper()) if str(x).upper() in orden_talles_ref else 99)
+            list_talles = ["Todos"] + talles_ordenados if 'Talle' in df_base.columns else ["Todos"]
+        
+            # 4. Línea (Alfabéticamente)
+            raw_lineas = [l for l in df_base.get('Linea', pd.Series()).dropna().unique().tolist() if str(l).strip()]
+            list_lineas = ["Todos"] + sorted(raw_lineas) if 'Linea' in df_base.columns else ["Todos"]
+        
+            # 5. Tamaño Paquete (Orden específico: Regular, Hiperpack, Pack Ahorro, Pack Mensual)
+            orden_tam_ref = ["REGULAR", "HIPERPACK", "PACK AHORRO", "PACK MENSUAL"]
+            raw_tam_pk = [tp for tp in df_base.get('Tamanio_Paquete', pd.Series()).dropna().unique().tolist() if str(tp).strip()]
+            tam_pk_ordenados = sorted(raw_tam_pk, key=lambda x: orden_tam_ref.index(str(x).upper()) if str(x).upper() in orden_tam_ref else 99)
+            list_tam_pk = ["Todos"] + tam_pk_ordenados if 'Tamanio_Paquete' in df_base.columns else ["Todos"]
+        
+            # 6. Etapa (Orden específico: Etapa 1, Etapa 2, Etapa 3, Etapa 4, Común / Toda la familia)
+            orden_etapa_ref = ["ETAPA 1", "ETAPA 2", "ETAPA 3", "ETAPA 4", "ESCOLAR", "COMÚN / TODA LA FAMILIA", "COMUN / TODA LA FAMILIA"]
+            raw_etapas = [e for e in df_base.get('Etapa', pd.Series()).dropna().unique().tolist() if str(e).strip()]
+            etapas_ordenadas = sorted(raw_etapas, key=lambda x: orden_etapa_ref.index(str(x).upper()) if str(x).upper() in orden_etapa_ref else 99)
+            list_etapas = ["Todos"] + etapas_ordenadas if 'Etapa' in df_base.columns else ["Todos"]
+        
+            # 7. Formato Leche
+            raw_formato = [f for f in df_base.get('Formato_Leche', pd.Series()).dropna().unique().tolist() if str(f).strip()]
+            list_formato = ["Todos"] + sorted(raw_formato) if 'Formato_Leche' in df_base.columns else ["Todos"]
+        
+            # 8. Presentación (ml de menor a mayor, luego grs/kg de menor a mayor)
+            import re
+            def sort_key_presentacion(p_str):
+                p_upper = str(p_str).upper().strip()
+                # ml / lt primero (prioridad 0)
+                if "ML" in p_upper or "LT" in p_upper:
+                    val_match = re.search(r'(\d+[\.,]?\d*)', p_upper)
+                    val = float(val_match.group(1).replace(',', '.')) if val_match else 0
+                    if "LT" in p_upper and val < 10:  # Convertimos Lt a ml equivalentes para ordenación
+                        val = val * 1000
+                    return (0, val)
+                # grs / kg después (prioridad 1)
+                elif "GRS" in p_upper or "GR" in p_upper or "KG" in p_upper:
+                    val_match = re.search(r'(\d+[\.,]?\d*)', p_upper)
+                    val = float(val_match.group(1).replace(',', '.')) if val_match else 0
+                    if "KG" in p_upper and val < 10:  # Convertimos Kg a gramos equivalentes para ordenación
+                        val = val * 1000
+                    return (1, val)
+                else:
+                    return (2, p_upper)
+        
+            raw_presentacion = [p for p in df_base.get('Presentacion', pd.Series()).dropna().unique().tolist() if str(p).strip()]
+            pres_ordenadas = sorted(raw_presentacion, key=sort_key_presentacion)
+            list_presentacion = ["Todos"] + pres_ordenadas if 'Presentacion' in df_base.columns else ["Todos"]
+        
+        
+            # --- RENDERIZADO DE SELECTBOXES ---
             filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_tab")
             filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_tab")
-            
-            df_filtrado = st.session_state.df_prod.copy()
-            
+        
+            # --- FILTROS ESPECÍFICOS / AVANZADOS ---
+            st.markdown("##### ⚙️ Filtros Especiales (Pañales & Leches)")
+            fa1, fa2, fa3 = st.columns(3)
+            fa4, fa5, fa6 = st.columns(3)
+        
+            # Fila 1: Atributos de Pañales
+            filtro_talle = fa1.selectbox("Talle", list_talles, key="f_talle_tab")
+            filtro_linea = fa2.selectbox("Línea", list_lineas, key="f_linea_tab")
+            filtro_tam_pk = fa3.selectbox("Tamaño Paquete", list_tam_pk, key="f_tam_pk_tab")
+        
+            # Fila 2: Atributos de Leches
+            filtro_etapa = fa4.selectbox("Etapa (Leche)", list_etapas, key="f_etapa_tab")
+            filtro_formato = fa5.selectbox("Formato Leche", list_formato, key="f_formato_tab")
+            filtro_presentacion = fa6.selectbox("Presentación", list_presentacion, key="f_pres_tab")
+        
+            df_filtrado = df_base.copy()
+        
             # Calculamos la columna Stock_Disponible en el DataFrame
             if 'Stock_Actual' in df_filtrado.columns and 'ID_Producto' in df_filtrado.columns:
                 df_filtrado['Stock_Actual'] = pd.to_numeric(df_filtrado['Stock_Actual'], errors='coerce').fillna(0)
@@ -2462,52 +2663,54 @@ else:
                 df_filtrado['Stock_Disponible'] = df_filtrado['Stock_Actual'] - df_filtrado['Stock_Reservado']
             else:
                 df_filtrado['Stock_Disponible'] = 0
-            
-            # -------------------------------------------------------------
-            # 1️⃣ FILTRO DE PRODUCTOS INACTIVOS
-            # -------------------------------------------------------------
+        
+            # --- FILTRADO PROGRESIVO ---
             if 'Estado' in df_filtrado.columns and not mostrar_inactivos:
                 df_filtrado = df_filtrado[df_filtrado['Estado'] != 'INACTIVO']
-            
-            # -------------------------------------------------------------
-            # 2️⃣ FILTRO DE STOCK DISPONIBLE (Stock_Disponible > 0)
-            # -------------------------------------------------------------
+        
             if solo_con_stock:
                 df_filtrado = df_filtrado[df_filtrado['Stock_Disponible'] > 0]
-            
-            # -------------------------------------------------------------
-            # 3️⃣ FILTROS DE BÚSQUEDA POR TEXTO, RUBRO Y MARCA
-            # -------------------------------------------------------------
+        
             if busqueda_texto:
                 busqueda_texto = busqueda_texto.lower()
                 mask = df_filtrado['Nombre'].str.lower().str.contains(busqueda_texto, na=False) | \
                        df_filtrado['ID_Producto'].astype(str).str.lower().str.contains(busqueda_texto, na=False)
                 df_filtrado = df_filtrado[mask]
-            
+        
             if filtro_rubro != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Rubro'] == filtro_rubro]
             if filtro_marca != "Todos": 
                 df_filtrado = df_filtrado[df_filtrado['Marca'] == filtro_marca]
-            
-            # -------------------------------------------------------------
-            # 🔤 ORDENAR ALFABÉTICAMENTE POR NOMBRE
-            # -------------------------------------------------------------
+        
+            # Aplicación de filtros especiales
+            if filtro_talle != "Todos" and 'Talle' in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado['Talle'] == filtro_talle]
+            if filtro_linea != "Todos" and 'Linea' in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado['Linea'] == filtro_linea]
+            if filtro_tam_pk != "Todos" and 'Tamanio_Paquete' in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado['Tamanio_Paquete'] == filtro_tam_pk]
+            if filtro_etapa != "Todos" and 'Etapa' in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado['Etapa'] == filtro_etapa]
+            if filtro_formato != "Todos" and 'Formato_Leche' in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado['Formato_Leche'] == filtro_formato]
+            if filtro_presentacion != "Todos" and 'Presentacion' in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado['Presentacion'] == filtro_presentacion]
+        
+            # --- ORDENAR ALFABÉTICAMENTE POR NOMBRE ---
             if 'Nombre' in df_filtrado.columns:
                 df_filtrado = df_filtrado.sort_values(by='Nombre', key=lambda col: col.str.lower(), ascending=True)
-            
-            # Guardamos una referencia para el generador antes de recortar columnas por rol
+        
             df_para_wsp = df_filtrado.copy()
-            
+        
             # Ajuste de columnas visibles según el rol
             if st.session_state.rol != "Administrador":
-                cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3']
+                cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3', 'Talle', 'Linea', 'Etapa', 'Formato_Leche', 'Presentacion']
                 df_filtrado = df_filtrado[[c for c in cols_vendedor if c in df_filtrado.columns]]
             else:
-                # Para administradores eliminamos las columnas auxiliares internas
                 df_filtrado = df_filtrado.drop(columns=['Stock_Reservado', 'Stock_Disponible'], errors='ignore')
-            
+        
             st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
-            
+        
             # -------------------------------------------------------------
             # 4️⃣ GENERADOR DE RESPUESTA PARA WHATSAPP
             # -------------------------------------------------------------
