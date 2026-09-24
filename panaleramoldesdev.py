@@ -3435,16 +3435,30 @@ else:
             with tab_alta:
                 st.subheader("➕ Registrar Nuevo Artículo")
                 
-                with st.form("form_alta_producto_unico", clear_on_submit=True):
+                # 1. Selector de Rubro fuera del form para habilitar dinamismo en pantalla
+                lista_rubros_base = LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General"]
+                rubro_nuevo = st.selectbox("Seleccione el Rubro del Producto*", options=lista_rubros_base, key="alta_rubro_sel")
+                
+                rubro_upper = str(rubro_nuevo).upper().strip()
+                es_rubro_panal = rubro_upper in ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+                es_rubro_leche = rubro_upper in ["LECHE", "LECHES"] and "SACALECHE" not in rubro_upper
+            
+                # OBTENER LÍNEAS EXISTENTES PARA EL DROPDOWN
+                lineas_existentes = []
+                if 'df_prod' in st.session_state and not st.session_state.df_prod.empty and 'Linea' in st.session_state.df_prod.columns:
+                    lineas_raw = st.session_state.df_prod['Linea'].dropna().astype(str).str.strip().str.title().unique().tolist()
+                    lineas_existentes = sorted([l for l in lineas_raw if l and l.lower() != "none"])
+            
+                # Seteamos clear_on_submit=False para evitar que se limpien los campos si falla la validación
+                with st.form("form_alta_producto_unico", clear_on_submit=False):
                     c_alta1, c_alta2 = st.columns(2)
                     
                     with c_alta1:
                         id_nuevo = st.text_input("Código / ID Producto*", key="alta_id").strip()
                         nombre_nuevo = st.text_input("Descripción / Nombre*", key="alta_nom").strip()
                         marca_nueva = st.text_input("Marca", key="alta_marca").strip()
-                        rubro_nuevo = st.selectbox("Rubro", options=LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General"])
-                        prov_seleccionado = st.selectbox("Proveedor", options=lista_proveedores)
-                        
+                        prov_seleccionado = st.selectbox("Proveedor", options=lista_proveedores if 'lista_proveedores' in globals() else [""])
+                    
                     with c_alta2:
                         stock_ini = st.number_input("Stock Inicial", min_value=0, value=0, step=1)
                         costo_ini = st.number_input("Precio Costo ($)", min_value=0.0, value=0.0, step=10.0)
@@ -3453,13 +3467,62 @@ else:
                         p3 = st.number_input("Precio Lista 3 ($)", min_value=0.0, value=0.0, step=10.0)
                         p4 = st.number_input("Precio Lista 4 ($)", min_value=0.0, value=0.0, step=10.0)
                         p5 = st.number_input("Precio Lista 5 ($)", min_value=0.0, value=0.0, step=10.0)
-    
+                    
+                    # --- SECCIÓN DINÁMICA DE ATRIBUTOS OBLIGATORIOS ---
+                    talle_val, linea_val, tam_pk_val, tipo_val = None, None, None, None
+                    etapa_val, formato_val, pres_val = None, None, None
+                    
+                    if es_rubro_panal:
+                        st.markdown("---")
+                        st.markdown("##### 🩺 Atributos Obligatorios para Pañales")
+                        c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+                        
+                        opts_talle = [""] + ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "Junior", "CH", "EG", "EEG"]
+                        talle_val = c_p1.selectbox("Talle*", options=opts_talle, key="alta_talle")
+                        
+                        # --- DESPLEGABLE / CREACIÓN DE LÍNEA CORREGIDO ---
+                        opts_linea = [""] + lineas_existentes + ["➕ Otra / Crear nueva..."]
+                        linea_sel = c_p2.selectbox("Línea*", options=opts_linea, key="alta_linea_sel")
+                        linea_nueva_txt = c_p2.text_input("Nueva Línea*", value="", key="alta_linea_text", help="Escribí aquí si elegiste '➕ Otra / Crear nueva...'")
+                        
+                        if linea_sel == "➕ Otra / Crear nueva...":
+                            linea_val = linea_nueva_txt.strip()
+                        else:
+                            linea_val = linea_sel
+                        
+                        opts_tam = [""] + ["Regular", "Hiperpack", "Pack Ahorro", "Pack Mensual"]
+                        tam_pk_val = c_p3.selectbox("Tamaño Paquete*", options=opts_tam, key="alta_tam_pk")
+                        
+                        opts_tipo = ["Con Abrojo", "Pants"]
+                        tipo_val = c_p4.selectbox("Tipo*", options=opts_tipo, key="alta_tipo")
+                    
+                    elif es_rubro_leche:
+                        st.markdown("---")
+                        st.markdown("##### 🥛 Atributos Obligatorios para Leches")
+                        c_l1, c_l2, c_l3 = st.columns(3)
+                        
+                        opts_etapa = [""] + ["Etapa 1", "Etapa 2", "Etapa 3", "Etapa 4", "Escolar", "Común / Toda la familia"]
+                        etapa_val = c_l1.selectbox("Etapa*", options=opts_etapa, key="alta_etapa")
+                        
+                        opts_formato = [""] + ["Líquida", "En Polvo"]
+                        formato_val = c_l2.selectbox("Formato Leche*", options=opts_formato, key="alta_formato")
+                        
+                        opts_pres = [""] + ["190 ml", "200 ml", "500 ml", "1 Lt", "125 grs", "400 grs", "800 grs", "1 kg", "1.2 kg"]
+                        pres_val = c_l3.selectbox("Presentación*", options=opts_pres, key="alta_pres")
+                    
                     st.caption("* Campos obligatorios")
                     btn_guardar = st.form_submit_button("💾 Guardar Producto en Base de Datos")
-    
+                
                 if btn_guardar:
+                    # Validación básica de datos generales
                     if not id_nuevo or not nombre_nuevo or p1 <= 0:
-                        st.error("Por favor, completa los campos obligatorios (ID, Nombre y Precio 1 > 0).")
+                        st.error("Por favor, completa los campos obligatorios generales (ID, Nombre y Precio 1 > 0).")
+                    # Validación de campos obligatorios para Pañales
+                    elif es_rubro_panal and (not talle_val or not linea_val or not tam_pk_val):
+                        st.error("⚠️ Para productos del rubro Pañales debe completar Talle, Línea y Tamaño de Paquete.")
+                    # Validación de campos obligatorios para Leches
+                    elif es_rubro_leche and (not etapa_val or not formato_val or not pres_val):
+                        st.error("⚠️ Para productos del rubro Leche debe completar Etapa, Formato y Presentación.")
                     else:
                         nuevo_prod = {
                             "ID_Producto": id_nuevo,
@@ -3473,15 +3536,22 @@ else:
                             "Precio_3": float(p3),
                             "Precio_4": float(p4),
                             "Precio_5": float(p5),
-                            "ID_Proveedor": None,
+                            "ID_Proveedor": prov_seleccionado if prov_seleccionado != "" else None,
                             "Stock_Min": 0,
                             "Stock_Max": 0,
-                            "Imagen": None
+                            "Imagen": None,
+                            "Talle": talle_val if es_rubro_panal and talle_val != "" else None,
+                            "Linea": linea_val.title() if es_rubro_panal and linea_val != "" else None,
+                            "Tamanio_Paquete": tam_pk_val if es_rubro_panal and tam_pk_val != "" else None,
+                            "Tipo": tipo_val if es_rubro_panal else None,
+                            "Etapa": etapa_val if es_rubro_leche and etapa_val != "" else None,
+                            "Formato_Leche": formato_val if es_rubro_leche and formato_val != "" else None,
+                            "Presentacion": pres_val if es_rubro_leche and pres_val != "" else None
                         }
                         
                         try:
                             db.table("PRODUCTOS").insert(nuevo_prod).execute()
-                            st.success(f"🎉 ¡Producto '{nombre_nuevo}' guardado!")
+                            st.success(f"🎉 ¡Producto '{nombre_nuevo}' guardado con sus atributos correspondientes!")
                             if 'df_prod' in st.session_state: del st.session_state['df_prod']
                             st.rerun()
                         except Exception as e:
@@ -3501,14 +3571,26 @@ else:
                 
                 if not st.session_state.df_prod.empty:
                     opciones = (st.session_state.df_prod['ID_Producto'].astype(str) + " - " + st.session_state.df_prod['Nombre']).tolist()
-                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones)
+                    prod_sel = st.selectbox("Seleccionar producto:", [""] + opciones, key="mod_prod_sel")
                     
                     def get_safe(key, fila, default=0, is_float=False):
                         val = fila.get(key)
                         if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
                             return default
                         return float(val) if is_float else int(float(val))
+            
+                    def get_str_safe(key, fila, default=""):
+                        val = fila.get(key)
+                        if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).lower() == "none":
+                            return default
+                        return str(val).strip()
                     
+                    # --- OBTENER LISTA DE LÍNEAS ÚNICAS PREVIAMENTE CARGADAS ---
+                    lineas_existentes = []
+                    if 'Linea' in st.session_state.df_prod.columns:
+                        lineas_raw = st.session_state.df_prod['Linea'].dropna().astype(str).str.strip().str.title().unique().tolist()
+                        lineas_existentes = sorted([l for l in lineas_raw if l and l.lower() != "none"])
+            
                     if prod_sel:
                         id_sel = prod_sel.split(" - ")[0]
                         fila = st.session_state.df_prod[st.session_state.df_prod['ID_Producto'].astype(str) == id_sel].iloc[0]
@@ -3532,46 +3614,137 @@ else:
                             opciones_prov_base = lista_proveedores
                         else:
                             opciones_prov_base = []
-            
-                        # Unir opciones base con las que ya tenga asignadas el producto
-                        todos_los_provs_opciones = sorted(list(set(opciones_prov_base + provs_actuales)))
                         
-                        with st.form("form_mod_completo"):
+                        todos_los_provs_opciones = sorted(list(set(opciones_prov_base + provs_actuales)))
+            
+                        # --- PREPARACIÓN DE OBTENCIÓN DE RUBRO ---
+                        rubros_lista = LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General"]
+                        rubro_actual = get_str_safe('Rubro', fila)
+                        idx_rubro_ini = rubros_lista.index(rubro_actual) if rubro_actual in rubros_lista else 0
+            
+                        n_rub = st.selectbox("Rubro*", options=rubros_lista, index=idx_rubro_ini, key=f"mod_rubro_{id_sel}")
+            
+                        rubro_upper = str(n_rub).upper().strip()
+                        es_rubro_panal = rubro_upper in ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+                        es_rubro_leche = rubro_upper in ["LECHE", "LECHES"] and "SACALECHE" not in rubro_upper
+            
+                        with st.form("form_mod_completo", clear_on_submit=False):
                             c1, c2, c3 = st.columns(3)
                             with c1:
-                                n_nom = st.text_input("Nombre", value=str(fila.get('Nombre', '')))
-                                rubros_lista = LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General"]
-                                idx_rubro = rubros_lista.index(fila.get('Rubro')) if fila.get('Rubro') in rubros_lista else 0
-                                n_rub = st.selectbox("Rubro", options=rubros_lista, index=idx_rubro)
-                                n_mar = st.text_input("Marca", value=str(fila.get('Marca', '')))
+                                n_nom = st.text_input("Nombre*", value=get_str_safe('Nombre', fila))
+                                n_mar = st.text_input("Marca", value=get_str_safe('Marca', fila))
                                 
-                                # --- MULTISELECT CON RAZONES SOCIALES ---
                                 n_prov_list = st.multiselect(
                                     "Proveedores Asignados",
                                     options=todos_los_provs_opciones,
                                     default=[p for p in provs_actuales if p in todos_los_provs_opciones],
                                     help="Podés agregar o quitar múltiples proveedores."
                                 )
-            
+                            
                             with c2:
                                 n_stk = st.number_input("Stock Actual", value=val_stk)
                                 n_min = st.number_input("Stock Min", value=val_min)
                                 n_max = st.number_input("Stock Max", value=val_max)
-                                n_img = st.text_input("URL Imagen", value=str(fila.get('Imagen', '')))
-            
+                                n_img = st.text_input("URL Imagen", value=get_str_safe('Imagen', fila))
+                            
                             with c3:
                                 n_cos = st.number_input("Costo", value=val_cos, format="%.2f")
-                                n_p1 = st.number_input("Precio 1", value=get_safe('Precio_1', fila, 0.0, True), format="%.2f")
+                                n_p1 = st.number_input("Precio 1*", value=get_safe('Precio_1', fila, 0.0, True), format="%.2f")
                                 n_p2 = st.number_input("Precio 2", value=get_safe('Precio_2', fila, 0.0, True), format="%.2f")
                                 n_p3 = st.number_input("Precio 3", value=get_safe('Precio_3', fila, 0.0, True), format="%.2f")
                                 n_p4 = st.number_input("Precio 4", value=get_safe('Precio_4', fila, 0.0, True), format="%.2f")
                                 n_p5 = st.number_input("Precio 5", value=get_safe('Precio_5', fila, 0.0, True), format="%.2f")
-                            
-                            if st.form_submit_button("✅ Guardar Todos los Cambios"):
+            
+                            # --- SECCIÓN DINÁMICA DE ATRIBUTOS SEGÚN RUBRO ---
+                            talle_val, linea_val, tam_pk_val, tipo_val = None, None, None, None
+                            etapa_val, formato_val, pres_val = None, None, None
+            
+                            if es_rubro_panal:
+                                st.markdown("---")
+                                st.markdown("##### 🩺 Atributos Obligatorios para Pañales")
+                                c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+                                
+                                opts_talle = [""] + ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "Junior", "CH", "EG", "EEG"]
+                                talle_actual = get_str_safe('Talle', fila)
+                                idx_talle = opts_talle.index(talle_actual) if talle_actual in opts_talle else 0
+                                talle_val = c_p1.selectbox("Talle*", options=opts_talle, index=idx_talle, key=f"mod_talle_{id_sel}")
+                                
+                                # --- MANEJO ESTABLE DE SELECCIÓN / CREACIÓN DE LÍNEA ---
+                                linea_actual = get_str_safe('Linea', fila).title()
+                                opts_linea_base = list(lineas_existentes)
+                                if linea_actual and linea_actual not in opts_linea_base:
+                                    opts_linea_base.append(linea_actual)
+                                    opts_linea_base = sorted(opts_linea_base)
+            
+                                opts_linea = [""] + opts_linea_base + ["➕ Otra / Crear nueva..."]
+                                idx_linea = opts_linea.index(linea_actual) if linea_actual in opts_linea else 0
+            
+                                linea_sel = c_p2.selectbox(
+                                    "Línea*", 
+                                    options=opts_linea, 
+                                    index=idx_linea, 
+                                    key=f"mod_linea_sel_{id_sel}"
+                                )
+                                
+                                linea_nueva_txt = c_p2.text_input(
+                                    "Nueva Línea*", 
+                                    value="", 
+                                    key=f"mod_linea_text_{id_sel}",
+                                    help="Escribí aquí si elegiste '➕ Otra / Crear nueva...'"
+                                )
+                                
+                                # Determinación de la línea a guardar
+                                if linea_sel == "➕ Otra / Crear nueva...":
+                                    linea_val = linea_nueva_txt.strip()
+                                else:
+                                    linea_val = linea_sel
+                                
+                                opts_tam = [""] + ["Regular", "Hiperpack", "Pack Ahorro", "Pack Mensual"]
+                                tam_actual = get_str_safe('Tamanio_Paquete', fila)
+                                idx_tam = opts_tam.index(tam_actual) if tam_actual in opts_tam else 0
+                                tam_pk_val = c_p3.selectbox("Tamaño Paquete*", options=opts_tam, index=idx_tam, key=f"mod_tam_{id_sel}")
+                                
+                                opts_tipo = ["Con Abrojo", "Pants"]
+                                tipo_actual = get_str_safe('Tipo', fila)
+                                idx_tipo = opts_tipo.index(tipo_actual) if tipo_actual in opts_tipo else 0
+                                tipo_val = c_p4.selectbox("Tipo*", options=opts_tipo, index=idx_tipo, key=f"mod_tipo_{id_sel}")
+            
+                            elif es_rubro_leche:
+                                st.markdown("---")
+                                st.markdown("##### 🥛 Atributos Obligatorios para Leches")
+                                c_l1, c_l2, c_l3 = st.columns(3)
+                                
+                                opts_etapa = [""] + ["Etapa 1", "Etapa 2", "Etapa 3", "Etapa 4", "Escolar", "Común / Toda la familia"]
+                                etapa_actual = get_str_safe('Etapa', fila)
+                                idx_etapa = opts_etapa.index(etapa_actual) if etapa_actual in opts_etapa else 0
+                                etapa_val = c_l1.selectbox("Etapa*", options=opts_etapa, index=idx_etapa, key=f"mod_etapa_{id_sel}")
+                                
+                                opts_formato = [""] + ["Líquida", "En Polvo"]
+                                formato_actual = get_str_safe('Formato_Leche', fila)
+                                idx_formato = opts_formato.index(formato_actual) if formato_actual in opts_formato else 0
+                                formato_val = c_l2.selectbox("Formato Leche*", options=opts_formato, index=idx_formato, key=f"mod_formato_{id_sel}")
+                                
+                                opts_pres = [""] + ["190 ml", "200 ml", "500 ml", "1 Lt", "125 grs", "400 grs", "800 grs", "1 kg", "1.2 kg"]
+                                pres_actual = get_str_safe('Presentacion', fila)
+                                idx_pres = opts_pres.index(pres_actual) if pres_actual in opts_pres else 0
+                                pres_val = c_l3.selectbox("Presentación*", options=opts_pres, index=idx_pres, key=f"mod_pres_{id_sel}")
+            
+                            st.caption("* Campos obligatorios")
+                            btn_mod_guardar = st.form_submit_button("✅ Guardar Todos los Cambios")
+            
+                        if btn_mod_guardar:
+                            # Validaciones previas al guardado
+                            if not n_nom or n_p1 <= 0:
+                                st.error("Por favor, completa los campos obligatorios generales (Nombre y Precio 1 > 0).")
+                            elif es_rubro_panal and (not talle_val or not linea_val or not tam_pk_val):
+                                st.error("⚠️ Para productos del rubro Pañales debe completar Talle, Línea y Tamaño de Paquete.")
+                            elif es_rubro_leche and (not etapa_val or not formato_val or not pres_val):
+                                st.error("⚠️ Para productos del rubro Leche debe completar Etapa, Formato y Presentación.")
+                            else:
                                 def clean_text(val):
                                     if val is None or val == "" or str(val).lower() == "none":
                                         return None
-                                    return str(val)
+                                    return str(val).strip()
                                 
                                 def clean_num(val, is_float=False):
                                     try:
@@ -3580,9 +3753,8 @@ else:
                                     except:
                                         return 0.0 if is_float else 0
                                 
-                                # Construir cadena limpia separada por comas
                                 cadena_provs_final = ", ".join(sorted([p.strip() for p in n_prov_list if p.strip()])) if n_prov_list else None
-            
+                                
                                 stock_nuevo = clean_num(n_stk)
                                 nombre_producto_nuevo = str(n_nom) if n_nom else "Sin nombre"
                                 
@@ -3590,7 +3762,7 @@ else:
                                     "Nombre": nombre_producto_nuevo,
                                     "Rubro": clean_text(n_rub),
                                     "Marca": clean_text(n_mar),
-                                    "ID_Proveedor": cadena_provs_final,  # Guarda texto con las Razones Sociales
+                                    "ID_Proveedor": cadena_provs_final,
                                     "Stock_Actual": stock_nuevo,
                                     "Stock_Min": clean_num(n_min),
                                     "Stock_Max": clean_num(n_max),
@@ -3600,7 +3772,14 @@ else:
                                     "Precio_2": clean_num(n_p2, True),
                                     "Precio_3": clean_num(n_p3, True),
                                     "Precio_4": clean_num(n_p4, True),
-                                    "Precio_5": clean_num(n_p5, True)
+                                    "Precio_5": clean_num(n_p5, True),
+                                    "Talle": talle_val if es_rubro_panal and talle_val != "" else None,
+                                    "Linea": linea_val.title() if es_rubro_panal and linea_val != "" else None,
+                                    "Tamanio_Paquete": tam_pk_val if es_rubro_panal and tam_pk_val != "" else None,
+                                    "Tipo": tipo_val if es_rubro_panal else None,
+                                    "Etapa": etapa_val if es_rubro_leche and etapa_val != "" else None,
+                                    "Formato_Leche": formato_val if es_rubro_leche and formato_val != "" else None,
+                                    "Presentacion": pres_val if es_rubro_leche and pres_val != "" else None
                                 }
                                 
                                 try:
@@ -3829,16 +4008,68 @@ else:
                 key="busqueda_stock"
             )
             
+            # --- PREPARACIÓN Y ORDENAMIENTO ALFABÉTICO DE OPCIONES PARA FILTROS ---
+            
+            # 1. Rubros ordenados alfabéticamente
+            rubros_unicos = sorted([r for r in df_prod['Rubro'].dropna().astype(str).str.strip().unique() if r and r.lower() != "none"]) if 'Rubro' in df_prod.columns else []
+            rubros = ["Todos"] + rubros_unicos
+        
+            # 2. Marcas ordenadas alfabéticamente
+            marcas_unicas = sorted([m for m in df_prod['Marca'].dropna().astype(str).str.strip().unique() if m and m.lower() != "none"]) if 'Marca' in df_prod.columns else []
+            marcas = ["Todos"] + marcas_unicas
+        
+            # 3. Proveedores ordenados alfabéticamente
+            col_prov = 'ID_Proveedor' if 'ID_Proveedor' in df_prod.columns else ('Proveedor' if 'Proveedor' in df_prod.columns else None)
+            provs_unicos = sorted([p for p in df_prod[col_prov].dropna().astype(str).str.strip().unique() if p and p.lower() != "none"]) if col_prov else []
+            provs = ["Todos"] + provs_unicos
+        
+            # --- FILTROS PRINCIPALES ---
             c1, c2, c3 = st.columns(3)
             filtro_rubro = c1.selectbox("Filtrar por Rubro", rubros, key="filtro_rubro_stock")
             filtro_marca = c2.selectbox("Filtrar por Marca", marcas, key="filtro_marca_stock")
             filtro_prov = c3.selectbox("Filtrar por Proveedor", provs, key="filtro_prov_stock")
             
+            # --- DETECCIÓN DE RUBRO PARA FILTROS DINÁMICOS ---
+            rubro_sel_upper = str(filtro_rubro).upper().strip()
+            es_rubro_panal = rubro_sel_upper in ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+            es_rubro_leche = rubro_sel_upper in ["LECHE", "LECHES"] and "SACALECHE" not in rubro_sel_upper
+        
+            # Opciones dinámicas extraídas del DataFrame
+            filtro_linea, filtro_talle, filtro_tam_pk, filtro_tipo = "Todos", "Todos", "Todos", "Todos"
+            filtro_etapa, filtro_formato, filtro_pres = "Todos", "Todos", "Todos"
+        
+            if es_rubro_panal:
+                c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+                
+                # Obtener valores únicos para pañales
+                opts_lineas = ["Todos"] + sorted([str(x).strip().title() for x in df_prod['Linea'].dropna().unique() if str(x).strip()]) if 'Linea' in df_prod.columns else ["Todos"]
+                opts_talles = ["Todos"] + sorted([str(x).strip() for x in df_prod['Talle'].dropna().unique() if str(x).strip()]) if 'Talle' in df_prod.columns else ["Todos"]
+                opts_tam = ["Todos"] + sorted([str(x).strip() for x in df_prod['Tamanio_Paquete'].dropna().unique() if str(x).strip()]) if 'Tamanio_Paquete' in df_prod.columns else ["Todos"]
+                opts_tipo = ["Todos"] + sorted([str(x).strip() for x in df_prod['Tipo'].dropna().unique() if str(x).strip()]) if 'Tipo' in df_prod.columns else ["Todos"]
+                
+                filtro_linea = c_p1.selectbox("Filtrar por Línea", opts_lineas, key="filtro_linea_stock")
+                filtro_talle = c_p2.selectbox("Filtrar por Talle", opts_talles, key="filtro_talle_stock")
+                filtro_tam_pk = c_p3.selectbox("Filtrar por Tamanio Paquete", opts_tam, key="filtro_tam_stock")
+                filtro_tipo = c_p4.selectbox("Filtrar por Tipo", opts_tipo, key="filtro_tipo_stock")
+        
+            elif es_rubro_leche:
+                c_l1, c_l2, c_l3 = st.columns(3)
+                
+                # Obtener valores únicos para leches
+                opts_etapas = ["Todos"] + sorted([str(x).strip() for x in df_prod['Etapa'].dropna().unique() if str(x).strip()]) if 'Etapa' in df_prod.columns else ["Todos"]
+                opts_formatos = ["Todos"] + sorted([str(x).strip() for x in df_prod['Formato_Leche'].dropna().unique() if str(x).strip()]) if 'Formato_Leche' in df_prod.columns else ["Todos"]
+                opts_pres = ["Todos"] + sorted([str(x).strip() for x in df_prod['Presentacion'].dropna().unique() if str(x).strip()]) if 'Presentacion' in df_prod.columns else ["Todos"]
+                
+                filtro_etapa = c_l1.selectbox("Filtrar por Etapa", opts_etapas, key="filtro_etapa_stock")
+                filtro_formato = c_l2.selectbox("Filtrar por Formato", opts_formatos, key="filtro_formato_stock")
+                filtro_pres = c_l3.selectbox("Filtrar por Presentación", opts_pres, key="filtro_pres_stock")
+        
+            # --- APLICACIÓN DE FILTROS AL DATAFRAME ---
             df_f = df_prod.copy()
             
             if 'Estado' in df_f.columns and not mostrar_inactivos:
                 df_f = df_f[df_f['Estado'] != 'INACTIVO']
-    
+        
             if busqueda_texto:
                 busqueda_texto = busqueda_texto.lower()
                 mask = df_f['Nombre'].astype(str).str.lower().str.contains(busqueda_texto, na=False) | \
@@ -3851,26 +4082,47 @@ else:
             if filtro_marca != "Todos":
                 df_f = df_f[df_f['Marca'] == filtro_marca]
                 
-            # --- FILTRADO POR PROVEEDOR (Soporta múltiples proveedores por celda) ---
+            # --- FILTRADO POR PROVEEDOR ---
             if filtro_prov != "Todos":
                 if 'ID_Proveedor' in df_f.columns:
                     df_f = df_f[df_f['ID_Proveedor'].astype(str).str.contains(filtro_prov, na=False, regex=False)]
                 elif 'Proveedor' in df_f.columns:
                     df_f = df_f[df_f['Proveedor'].astype(str).str.contains(filtro_prov, na=False, regex=False)]
-    
+        
+            # --- FILTROS ESPECÍFICOS PAÑALES ---
+            if es_rubro_panal:
+                if filtro_linea != "Todos" and 'Linea' in df_f.columns:
+                    df_f = df_f[df_f['Linea'].astype(str).str.title() == filtro_linea]
+                if filtro_talle != "Todos" and 'Talle' in df_f.columns:
+                    df_f = df_f[df_f['Talle'].astype(str) == filtro_talle]
+                if filtro_tam_pk != "Todos" and 'Tamanio_Paquete' in df_f.columns:
+                    df_f = df_f[df_f['Tamanio_Paquete'].astype(str) == filtro_tam_pk]
+                if filtro_tipo != "Todos" and 'Tipo' in df_f.columns:
+                    df_f = df_f[df_f['Tipo'].astype(str) == filtro_tipo]
+        
+            # --- FILTROS ESPECÍFICOS LECHES ---
+            if es_rubro_leche:
+                if filtro_etapa != "Todos" and 'Etapa' in df_f.columns:
+                    df_f = df_f[df_f['Etapa'].astype(str) == filtro_etapa]
+                if filtro_formato != "Todos" and 'Formato_Leche' in df_f.columns:
+                    df_f = df_f[df_f['Formato_Leche'].astype(str) == filtro_formato]
+                if filtro_pres != "Todos" and 'Presentacion' in df_f.columns:
+                    df_f = df_f[df_f['Presentacion'].astype(str) == filtro_pres]
+        
+            # --- PREPARACIÓN Y CÁLCULOS DE STOCK ---
             df_f['Stock_Actual'] = pd.to_numeric(df_f['Stock_Actual'], errors='coerce').fillna(0)
             df_f['Stock_Min'] = pd.to_numeric(df_f['Stock_Min'], errors='coerce').fillna(0)
             df_f['Stock_Max'] = pd.to_numeric(df_f['Stock_Max'], errors='coerce').fillna(0)
-    
+        
             df_f['Faltante_Min'] = (df_f['Stock_Min'] - df_f['Stock_Actual']).clip(lower=0)
             df_f['Faltante_Max'] = (df_f['Stock_Max'] - df_f['Stock_Actual']).clip(lower=0)
             
             df_f['Pedir'] = False
             cols_mostrar = ['Pedir', 'Nombre', 'Stock_Actual', 'Stock_Min', 'Stock_Max', 'Faltante_Min', 'Faltante_Max']
             cols_presentes = [c for c in cols_mostrar if c in df_f.columns]
-    
+        
             st.caption("💡 Tildá únicamente los artículos que querés incluir en el mensaje de WhatsApp.")
-    
+        
             df_editado = st.data_editor(
                 df_f[cols_presentes],
                 column_config={
@@ -3885,7 +4137,7 @@ else:
                 use_container_width=True,
                 key="editor_tabla_stock"
             )
-    
+        
             col_exp1, col_exp2 = st.columns(2)
             
             import io
@@ -3901,18 +4153,41 @@ else:
             )
             
             if col_exp2.button("💬 Generar Resumen para WhatsApp", key="btn_wsp_p1"):
-                seleccionados = df_editado[df_editado['Pedir'] == True]
+                seleccionados = df_editado[df_editado['Pedir'] == True].copy()
                 
                 if seleccionados.empty:
                     st.warning("⚠️ No has tildado ningún producto en la columna '📱 Pedir'. Seleccioná al menos uno en la tabla.")
                 else:
+                    # --- ORDENAMIENTO PERSONALIZADO POR TALLE ---
+                    orden_talles = ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "Junior", "CH", "EG", "EEG"]
+                    
+                    # Verificamos si la columna 'Talle' está presente en el DataFrame
+                    if 'Talle' in df_f.columns:
+                        # Vinculamos los talles de df_f a seleccionados usando el índice
+                        seleccionados['Talle'] = df_f.loc[seleccionados.index, 'Talle'].astype(str).str.strip()
+                        
+                        # Convertimos la columna a tipo Categorical con el orden personalizado definido
+                        seleccionados['Talle_Cat'] = pd.Categorical(
+                            seleccionados['Talle'], 
+                            categories=orden_talles, 
+                            ordered=True
+                        )
+                        
+                        # Ordenamos por la categoría de Talle y secundariamente por Nombre
+                        seleccionados = seleccionados.sort_values(by=['Talle_Cat', 'Nombre'], na_position='last')
+        
+                    # --- CONSTRUCCIÓN DEL MENSAJE DE WHATSAPP ---
                     mensaje = "🛒 *Pedido Sugerido (Faltantes a Mínimo):*\n"
                     for _, item in seleccionados.iterrows():
                         cant_pedir = int(item['Faltante_Min']) if item['Faltante_Min'] > 0 else 1
-                        mensaje += f"- {item['Nombre']}: Faltan {cant_pedir}\n"
+                        
+                        # Si el producto tiene talle, se lo agregamos a la línea para mayor claridad
+                        talle_str = f" (Talle {item['Talle']})" if 'Talle' in item and pd.notna(item['Talle']) and item['Talle'] not in ["", "None", "nan"] else ""
+                        
+                        mensaje += f"- {item['Nombre']}{talle_str}: Faltan {cant_pedir}\n"
                     
                     st.text_area("Copia este mensaje para WhatsApp:", value=mensaje, height=200, key="txt_wsp_p1")
-    
+        
             st.divider()
             if st.button("🔄 RECALCULAR STOCK MÍNIMO/MÁXIMO", key="btn_recalc_p1"):
                 ids_a_recalcular = df_f['ID_Producto'].astype(str).tolist() if 'ID_Producto' in df_f.columns else []
@@ -3936,53 +4211,115 @@ else:
                 placeholder="Ej: pampers, babydry, 779...",
                 key="busqueda_texto_abc"
             )
-
+        
+            # --- PREPARACIÓN Y ORDENAMIENTO ALFABÉTICO DE FILTROS ---
+            rubros_unicos = sorted([r for r in df_prod['Rubro'].dropna().astype(str).str.strip().unique() if r and r.lower() != "none"]) if 'Rubro' in df_prod.columns else []
+            p_rubros = ["Todos"] + rubros_unicos
+        
+            marcas_unicas = sorted([m for m in df_prod['Marca'].dropna().astype(str).str.strip().unique() if m and m.lower() != "none"]) if 'Marca' in df_prod.columns else []
+            p_marcas = ["Todos"] + marcas_unicas
+        
+            col_prov = 'ID_Proveedor' if 'ID_Proveedor' in df_prod.columns else ('Proveedor' if 'Proveedor' in df_prod.columns else None)
+            provs_unicos = sorted([p for p in df_prod[col_prov].dropna().astype(str).str.strip().unique() if p and p.lower() != "none"]) if col_prov else []
+            p_provs = ["Todos"] + provs_unicos
+        
+            # --- FILTROS PRINCIPALES ---
             fa1, fa2, fa3 = st.columns(3)
-            p_rubro = fa1.selectbox("Rubro", rubros, key="p_rubro_abc")
-            p_marca = fa2.selectbox("Marca", marcas, key="p_marca_abc")
-            p_prov = fa3.selectbox("Proveedor", provs, key="p_prov_abc")
+            p_rubro = fa1.selectbox("Rubro", p_rubros, key="p_rubro_abc")
+            p_marca = fa2.selectbox("Marca", p_marcas, key="p_marca_abc")
+            p_prov = fa3.selectbox("Proveedor", p_provs, key="p_prov_abc")
+        
+            # --- DETECCIÓN DE RUBRO Y FILTROS DINÁMICOS ADICIONALES ---
+            rubro_sel_upper = str(p_rubro).upper().strip()
+            es_rubro_panal = rubro_sel_upper in ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+            es_rubro_leche = rubro_sel_upper in ["LECHE", "LECHES"] and "SACALECHE" not in rubro_sel_upper
+        
+            filtro_linea_abc, filtro_talle_abc, filtro_tam_pk_abc, filtro_tipo_abc = "Todos", "Todos", "Todos", "Todos"
+            filtro_etapa_abc, filtro_formato_abc, filtro_pres_abc = "Todos", "Todos", "Todos"
+        
+            if es_rubro_panal:
+                c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+                opts_lineas = ["Todos"] + sorted([str(x).strip().title() for x in df_prod['Linea'].dropna().unique() if str(x).strip()]) if 'Linea' in df_prod.columns else ["Todos"]
+                opts_talles = ["Todos"] + sorted([str(x).strip() for x in df_prod['Talle'].dropna().unique() if str(x).strip()]) if 'Talle' in df_prod.columns else ["Todos"]
+                opts_tam = ["Todos"] + sorted([str(x).strip() for x in df_prod['Tamanio_Paquete'].dropna().unique() if str(x).strip()]) if 'Tamanio_Paquete' in df_prod.columns else ["Todos"]
+                opts_tipo = ["Todos"] + sorted([str(x).strip() for x in df_prod['Tipo'].dropna().unique() if str(x).strip()]) if 'Tipo' in df_prod.columns else ["Todos"]
+                
+                filtro_linea_abc = c_p1.selectbox("Línea", opts_lineas, key="f_linea_abc")
+                filtro_talle_abc = c_p2.selectbox("Talle", opts_talles, key="f_talle_abc")
+                filtro_tam_pk_abc = c_p3.selectbox("Tamaño Paquete", opts_tam, key="f_tam_abc")
+                filtro_tipo_abc = c_p4.selectbox("Tipo", opts_tipo, key="f_tipo_abc")
+        
+            elif es_rubro_leche:
+                c_l1, c_l2, c_l3 = st.columns(3)
+                opts_etapas = ["Todos"] + sorted([str(x).strip() for x in df_prod['Etapa'].dropna().unique() if str(x).strip()]) if 'Etapa' in df_prod.columns else ["Todos"]
+                opts_formatos = ["Todos"] + sorted([str(x).strip() for x in df_prod['Formato_Leche'].dropna().unique() if str(x).strip()]) if 'Formato_Leche' in df_prod.columns else ["Todos"]
+                opts_pres = ["Todos"] + sorted([str(x).strip() for x in df_prod['Presentacion'].dropna().unique() if str(x).strip()]) if 'Presentacion' in df_prod.columns else ["Todos"]
+                
+                filtro_etapa_abc = c_l1.selectbox("Etapa", opts_etapas, key="f_etapa_abc")
+                filtro_formato_abc = c_l2.selectbox("Formato", opts_formatos, key="f_formato_abc")
+                filtro_pres_abc = c_l3.selectbox("Presentación", opts_pres, key="f_pres_abc")
             
             dias_analisis = st.slider("Días de historia de ventas para scoring:", min_value=15, max_value=90, value=60, step=15, key="slider_dias_abc")
-
-            # Traemos solo los campos estándar de VENTAS_DETALLE (evita errores si no existe la columna de costo en la tabla de ventas)
+        
+            # Traemos solo los campos estándar de VENTAS_DETALLE
             res_vd = db.table("VENTAS_DETALLE").select("ID_Producto, Cantidad, Subtotal").execute().data
             df_vd = pd.DataFrame(res_vd) if res_vd else pd.DataFrame()
-
+        
             df_ranking = df_prod.copy()
             
             if 'Estado' in df_ranking.columns:
                 df_ranking = df_ranking[df_ranking['Estado'] != 'INACTIVO']
-
+        
             if 'Es_Stockeable' in df_ranking.columns:
                 df_ranking = df_ranking[df_ranking['Es_Stockeable'] == True]
-
+        
             if 'Rubro' in df_ranking.columns and 'Nombre' in df_ranking.columns:
                 es_leche = df_ranking['Rubro'].astype(str).str.upper() == 'LECHE'
                 contiene_bulto = df_ranking['Nombre'].astype(str).str.contains(' x12| x24| x30| x400| x800| x1000| x1200', case=False, na=False)
                 df_ranking = df_ranking[~es_leche | contiene_bulto]
-
+        
             df_ranking['Stock_Actual'] = pd.to_numeric(df_ranking['Stock_Actual'], errors='coerce').fillna(0)
             df_ranking['Stock_Min'] = pd.to_numeric(df_ranking['Stock_Min'], errors='coerce').fillna(0)
             df_ranking['Stock_Max'] = pd.to_numeric(df_ranking['Stock_Max'], errors='coerce').fillna(0)
-
+        
+            # --- APLICACIÓN DE FILTROS AL RANKING ---
             if busqueda_abc:
                 b_txt = busqueda_abc.lower()
                 mask_abc = df_ranking['Nombre'].astype(str).str.lower().str.contains(b_txt, na=False) | \
                            df_ranking['ID_Producto'].astype(str).str.lower().str.contains(b_txt, na=False)
                 df_ranking = df_ranking[mask_abc]
-
+        
             if p_rubro != "Todos":
                 df_ranking = df_ranking[df_ranking['Rubro'] == p_rubro]
+        
             if p_marca != "Todos":
                 df_ranking = df_ranking[df_ranking['Marca'] == p_marca]
                 
-            # --- FILTRADO POR PROVEEDOR (Soporta múltiples proveedores por celda) ---
             if p_prov != "Todos":
                 if 'ID_Proveedor' in df_ranking.columns:
                     df_ranking = df_ranking[df_ranking['ID_Proveedor'].astype(str).str.contains(p_prov, na=False, regex=False)]
                 elif 'Proveedor' in df_ranking.columns:
                     df_ranking = df_ranking[df_ranking['Proveedor'].astype(str).str.contains(p_prov, na=False, regex=False)]
-
+        
+            # --- APLICACIÓN DE FILTROS ESPECÍFICOS ---
+            if es_rubro_panal:
+                if filtro_linea_abc != "Todos" and 'Linea' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Linea'].astype(str).str.title() == filtro_linea_abc]
+                if filtro_talle_abc != "Todos" and 'Talle' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Talle'].astype(str) == filtro_talle_abc]
+                if filtro_tam_pk_abc != "Todos" and 'Tamanio_Paquete' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Tamanio_Paquete'].astype(str) == filtro_tam_pk_abc]
+                if filtro_tipo_abc != "Todos" and 'Tipo' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Tipo'].astype(str) == filtro_tipo_abc]
+        
+            if es_rubro_leche:
+                if filtro_etapa_abc != "Todos" and 'Etapa' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Etapa'].astype(str) == filtro_etapa_abc]
+                if filtro_formato_abc != "Todos" and 'Formato_Leche' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Formato_Leche'].astype(str) == filtro_formato_abc]
+                if filtro_pres_abc != "Todos" and 'Presentacion' in df_ranking.columns:
+                    df_ranking = df_ranking[df_ranking['Presentacion'].astype(str) == filtro_pres_abc]
+        
             if df_ranking.empty:
                 st.info("No se encontraron productos con los criterios, texto y filtros seleccionados.")
             else:
@@ -3990,7 +4327,6 @@ else:
                     df_vd['Cantidad'] = pd.to_numeric(df_vd['Cantidad'], errors='coerce').fillna(0)
                     df_vd['Subtotal'] = pd.to_numeric(df_vd['Subtotal'], errors='coerce').fillna(0)
                     
-                    # Unimos con df_prod para tomar el costo real actualizado de la ficha del producto
                     df_vd['ID_Producto'] = df_vd['ID_Producto'].astype(str)
                     
                     df_costos = df_prod[['ID_Producto', 'Precio_Costo_Unitario']].copy()
@@ -3998,9 +4334,9 @@ else:
                     
                     df_vd = pd.merge(df_vd, df_costos, on='ID_Producto', how='left')
                     df_vd['Precio_Costo_Unitario'] = df_vd['Precio_Costo_Unitario'].fillna(0)
-
+        
                     df_vd['Ganancia_Real'] = df_vd['Subtotal'] - (df_vd['Cantidad'] * df_vd['Precio_Costo_Unitario'])
-
+        
                     agrupado = df_vd.groupby('ID_Producto').agg({
                         'Cantidad': 'sum',
                         'Subtotal': 'sum',
@@ -4012,27 +4348,26 @@ else:
                     })
                     
                     df_ranking['ID_Producto'] = df_ranking['ID_Producto'].astype(str)
-                    
                     df_ranking = pd.merge(df_ranking, agrupado, on='ID_Producto', how='left')
                 else:
                     df_ranking['Rotacion_Unid'] = 0
                     df_ranking['Facturacion_Total'] = 0.0
                     df_ranking['Ganancia_Total'] = 0.0
-
+        
                 df_ranking['Rotacion_Unid'] = df_ranking['Rotacion_Unid'].fillna(0)
                 df_ranking['Facturacion_Total'] = df_ranking['Facturacion_Total'].fillna(0.0)
                 df_ranking['Ganancia_Total'] = df_ranking['Ganancia_Total'].fillna(0.0)
-
+        
                 max_rot = df_ranking['Rotacion_Unid'].max()
                 max_fact = df_ranking['Facturacion_Total'].max()
                 max_gan = df_ranking['Ganancia_Total'].max()
-
+        
                 norm_rot = (df_ranking['Rotacion_Unid'] / max_rot * 100) if max_rot > 0 else 0
                 norm_fact = (df_ranking['Facturacion_Total'] / max_fact * 100) if max_fact > 0 else 0
                 norm_gan = (df_ranking['Ganancia_Total'] / max_gan * 100) if max_gan > 0 else 0
-
+        
                 df_ranking['Score_Comercial'] = (0.40 * norm_fact) + (0.35 * norm_rot) + (0.25 * norm_gan)
-
+        
                 def asignar_categoria(score, p70, p30):
                     if score >= p70 and score > 0:
                         return "🟢 Categoría A"
@@ -4040,21 +4375,21 @@ else:
                         return "🟡 Categoría B"
                     else:
                         return "🔴 Categoría C"
-
+        
                 p70 = df_ranking['Score_Comercial'].quantile(0.70)
                 p30 = df_ranking['Score_Comercial'].quantile(0.30)
                 
                 df_ranking['Categoria_ABC'] = df_ranking['Score_Comercial'].apply(lambda x: asignar_categoria(x, p70, p30))
-
+        
                 df_ranking['Faltante_Min'] = (df_ranking['Stock_Min'] - df_ranking['Stock_Actual']).clip(lower=0)
-
+        
                 def calc_urgencia(row):
                     if row['Stock_Min'] > 0 and row['Faltante_Min'] > 0:
                         return (row['Faltante_Min'] / row['Stock_Min']) * 100
                     return 0.0
-
+        
                 df_ranking['Urgencia_%'] = df_ranking.apply(calc_urgencia, axis=1)
-
+        
                 df_ranking['Orden_Cat'] = df_ranking['Categoria_ABC'].map({
                     "🟢 Categoría A": 1,
                     "🟡 Categoría B": 2,
@@ -4065,15 +4400,15 @@ else:
                     by=['Orden_Cat', 'Urgencia_%', 'Score_Comercial'], 
                     ascending=[True, False, False]
                 ).reset_index(drop=True)
-
+        
                 df_ranking['Pedir'] = df_ranking['Urgencia_%'] > 0
                 
                 cols_abc_mostrar = ['Pedir', 'Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Stock_Min', 'Faltante_Min', 'Score_Comercial']
                 cols_abc_presentes = [c for c in cols_abc_mostrar if c in df_ranking.columns]
-
+        
                 st.markdown("---")
                 st.caption("📌 Los artículos con stock por debajo del mínimo vienen tildados automáticamente. Podés destildar o sumar los que desees.")
-
+        
                 df_abc_editado = st.data_editor(
                     df_ranking[cols_abc_presentes],
                     column_config={
@@ -4091,19 +4426,34 @@ else:
                     use_container_width=True,
                     key="editor_tabla_abc"
                 )
-
+        
                 col_abc_wsp, col_abc_exp = st.columns(2)
                 
                 if col_abc_wsp.button("💬 Generar WhatsApp Priorizado", type="primary", key="btn_wsp_abc"):
-                    sel_abc = df_abc_editado[df_abc_editado['Pedir'] == True]
+                    sel_abc = df_abc_editado[df_abc_editado['Pedir'] == True].copy()
                     
                     if sel_abc.empty:
                         st.warning("⚠️ No seleccionaste ningún producto. Tildá las casillas en la columna '📱 Pedir'.")
                     else:
+                        # --- ORDENAMIENTO PERSONALIZADO POR TALLE PARA WHATSAPP ---
+                        orden_talles = ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "Junior", "CH", "EG", "EEG"]
+                        
+                        if 'Talle' in df_ranking.columns:
+                            sel_abc['Talle'] = df_ranking.loc[sel_abc.index, 'Talle'].astype(str).str.strip()
+                            sel_abc['Talle_Cat'] = pd.Categorical(
+                                sel_abc['Talle'], 
+                                categories=orden_talles, 
+                                ordered=True
+                            )
+                            sel_abc = sel_abc.sort_values(by=['Talle_Cat', 'Nombre'], na_position='last')
+        
                         msg_abc = ""
                         for _, r in sel_abc.iterrows():
                             cant_comprar = int(r['Faltante_Min']) if r['Faltante_Min'] > 0 else 1
-                            rubro_prod = str(r.get('Rubro', '')).strip().upper()
+                            
+                            # Identificar si es leche vía df_ranking
+                            idx = r.name
+                            rubro_prod = str(df_ranking.loc[idx, 'Rubro']).strip().upper() if 'Rubro' in df_ranking.columns and idx in df_ranking.index else ""
                             
                             if rubro_prod == "LECHE":
                                 unid_texto = "fardo" if cant_comprar == 1 else "fardos"
@@ -4113,9 +4463,9 @@ else:
                             msg_abc += f"{cant_comprar} {unid_texto} *{r['Nombre']}*\n"
                         
                         st.text_area("Copiar mensaje para proveedor:", value=msg_abc, height=220, key="txt_area_abc")
-
+        
                 df_export_excel = df_ranking[df_ranking['Urgencia_%'] > 0].drop(columns=['Pedir', 'Orden_Cat'], errors='ignore')
-
+        
                 if not df_export_excel.empty:
                     buffer_abc = io.BytesIO()
                     with pd.ExcelWriter(buffer_abc, engine='xlsxwriter') as writer_abc:
@@ -4138,29 +4488,38 @@ else:
             st.subheader("📊 Tablero de Inteligencia para Decisiones de Compra")
             st.caption("Analizá de forma rápida y visual los faltantes, el impacto en la inversión y la urgencia de reponer.")
             
-            # Tomar ranking si se procesó en pestaña 2 o armar copia limpia de df_prod
-            if 'df_ranking' in locals() and not df_ranking.empty:
-                df_dash = df_ranking.copy()
-            else:
-                df_dash = df_prod.copy()
-                if 'Estado' in df_dash.columns:
-                    df_dash = df_dash[df_dash['Estado'] != 'INACTIVO']
-                if 'Es_Stockeable' in df_dash.columns:
-                    df_dash = df_dash[df_dash['Es_Stockeable'] == True]
+            # --- BASE DE DATOS INDEPENDIENTE ---
+            # Usamos df_prod directamente para no heredar filtros de la Pestaña 2
+            df_dash = df_prod.copy()
+            
+            if 'Estado' in df_dash.columns:
+                df_dash = df_dash[df_dash['Estado'] != 'INACTIVO']
+            if 'Es_Stockeable' in df_dash.columns:
+                df_dash = df_dash[df_dash['Es_Stockeable'] == True]
 
-                df_dash['Stock_Actual'] = pd.to_numeric(df_dash.get('Stock_Actual', 0), errors='coerce').fillna(0)
-                df_dash['Stock_Min'] = pd.to_numeric(df_dash.get('Stock_Min', 0), errors='coerce').fillna(0)
-                df_dash['Faltante_Min'] = (df_dash['Stock_Min'] - df_dash['Stock_Actual']).clip(lower=0)
-                
+            df_dash['Stock_Actual'] = pd.to_numeric(df_dash.get('Stock_Actual', 0), errors='coerce').fillna(0)
+            df_dash['Stock_Min'] = pd.to_numeric(df_dash.get('Stock_Min', 0), errors='coerce').fillna(0)
+            df_dash['Faltante_Min'] = (df_dash['Stock_Min'] - df_dash['Stock_Actual']).clip(lower=0)
+            
+            # Recuperar o calcular Categoria_ABC y Score_Comercial si existen
+            if 'df_ranking' in locals() and not df_ranking.empty and 'Categoria_ABC' in df_ranking.columns:
+                # Mapear Categoria_ABC y Score desde df_ranking por ID_Producto / Nombre sin filtrar las filas
+                col_key = 'ID_Producto' if 'ID_Producto' in df_dash.columns else 'Nombre'
+                if col_key in df_ranking.columns:
+                    map_abc = df_ranking.set_index(col_key)['Categoria_ABC'].to_dict()
+                    map_score = df_ranking.set_index(col_key)['Score_Comercial'].to_dict() if 'Score_Comercial' in df_ranking.columns else {}
+                    df_dash['Categoria_ABC'] = df_dash[col_key].map(map_abc).fillna("🟡 General")
+                    df_dash['Score_Comercial'] = df_dash[col_key].map(map_score).fillna(0.0)
+            else:
                 df_dash['Categoria_ABC'] = "🟡 General"
                 df_dash['Score_Comercial'] = 0.0
 
-                def calc_urg_dash(row):
-                    if row['Stock_Min'] > 0 and row['Faltante_Min'] > 0:
-                        return (row['Faltante_Min'] / row['Stock_Min']) * 100
-                    return 0.0
+            def calc_urg_dash(row):
+                if row['Stock_Min'] > 0 and row['Faltante_Min'] > 0:
+                    return (row['Faltante_Min'] / row['Stock_Min']) * 100
+                return 0.0
 
-                df_dash['Urgencia_%'] = df_dash.apply(calc_urg_dash, axis=1)
+            df_dash['Urgencia_%'] = df_dash.apply(calc_urg_dash, axis=1)
 
             # Asegurar columna de Precio_Costo_Unitario
             if 'Precio_Costo_Unitario' not in df_dash.columns:
@@ -4173,26 +4532,92 @@ else:
 
             df_dash['Inversion_Estimada'] = df_dash['Faltante_Min'] * df_dash['Precio_Costo_Unitario']
 
+            # --- LISTAS DE OPCIONES INDEPENDIENTES PARA ESTA PESTAÑA ---
+            rubros_dash = ["Todos"] + sorted([str(x) for x in df_dash['Rubro'].dropna().unique().tolist() if str(x).strip()]) if 'Rubro' in df_dash.columns else ["Todos"]
+            marcas_dash = ["Todas"] + sorted([str(x) for x in df_dash['Marca'].dropna().unique().tolist() if str(x).strip()]) if 'Marca' in df_dash.columns else ["Todas"]
+            
+            # Obtener lista de proveedores única para el selector
+            provs_dash = ["Todos"]
+            if 'ID_Proveedor' in df_dash.columns:
+                raw_p = df_dash['ID_Proveedor'].dropna().astype(str).tolist()
+                p_set = set()
+                for item in raw_p:
+                    for sub_p in item.split(','):
+                        sub_p_clean = sub_p.strip()
+                        if sub_p_clean and sub_p_clean.lower() != 'none':
+                            p_set.add(sub_p_clean)
+                provs_dash += sorted(list(p_set))
+
             # --- FILTROS INTERACTIVOS DEL DASHBOARD ---
             st.markdown("##### 🎛️ Filtros Rápidos de Decisión")
             f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns(5)
 
-            ft_rubro = f_col1.selectbox("Rubro", rubros, key="dash_rubro")
-            ft_marca = f_col2.selectbox("Marca", marcas, key="dash_marca")
-            ft_prov = f_col3.selectbox("Proveedor", provs, key="dash_prov")
+            ft_rubro = f_col1.selectbox("Rubro", rubros_dash, key="dash_rubro")
+            ft_marca = f_col2.selectbox("Marca", marcas_dash, key="dash_marca")
+            ft_prov = f_col3.selectbox("Proveedor", provs_dash, key="dash_prov")
             
             cats_abc_list = ["Todas"] + [c for c in df_dash['Categoria_ABC'].dropna().unique().tolist() if c] if 'Categoria_ABC' in df_dash.columns else ["Todas"]
             ft_cat = f_col4.selectbox("Categoría ABC", cats_abc_list, key="dash_cat")
 
             min_urgencia = f_col5.slider("% Urgencia Mínima", min_value=0, max_value=100, value=1, step=5, key="dash_urg_slider")
 
-            # Aplicar Filtros
+            # --- FILTROS DINÁMICOS SEGÚN RUBRO ---
+            ft_talle = "Todos"
+            ft_linea = "Todas"
+            ft_tam_paq = "Todos"
+            ft_etapa = "Todas"
+            ft_formato_leche = "Todos"
+            ft_presentacion = "Todas"
+
+            if ft_rubro in ["PAÑALES", "PAÑALES ADULTOS"]:
+                st.markdown("###### 👶 Filtros Específicos de Pañales")
+                fp_col1, fp_col2, fp_col3 = st.columns(3)
+                
+                talles_list = ["Todos"] + sorted([str(x) for x in df_dash['Talle'].dropna().unique().tolist() if str(x).strip()]) if 'Talle' in df_dash.columns else ["Todos"]
+                lineas_list = ["Todas"] + sorted([str(x) for x in df_dash['Linea'].dropna().unique().tolist() if str(x).strip()]) if 'Linea' in df_dash.columns else ["Todas"]
+                tam_paq_list = ["Todos"] + sorted([str(x) for x in df_dash['Tamano_Paquete'].dropna().unique().tolist() if str(x).strip()]) if 'Tamano_Paquete' in df_dash.columns else ["Todos"]
+                
+                ft_talle = fp_col1.selectbox("Talle", talles_list, key="dash_talle")
+                ft_linea = fp_col2.selectbox("Línea", lineas_list, key="dash_linea")
+                ft_tam_paq = fp_col3.selectbox("Tamaño Paquete", tam_paq_list, key="dash_tam_paq")
+
+            elif ft_rubro == "LECHE":
+                st.markdown("###### 🍼 Filtros Específicos de Leche")
+                fl_col1, fl_col2, fl_col3 = st.columns(3)
+                
+                etapas_list = ["Todas"] + sorted([str(x) for x in df_dash['Etapa'].dropna().unique().tolist() if str(x).strip()]) if 'Etapa' in df_dash.columns else ["Todas"]
+                formatos_list = ["Todos"] + sorted([str(x) for x in df_dash['Formato_Leche'].dropna().unique().tolist() if str(x).strip()]) if 'Formato_Leche' in df_dash.columns else ["Todos"]
+                presentaciones_list = ["Todas"] + sorted([str(x) for x in df_dash['Presentacion'].dropna().unique().tolist() if str(x).strip()]) if 'Presentacion' in df_dash.columns else ["Todas"]
+                
+                ft_etapa = fl_col1.selectbox("Etapa", etapas_list, key="dash_etapa")
+                ft_formato_leche = fl_col2.selectbox("Formato Leche", formatos_list, key="dash_formato_leche")
+                ft_presentacion = fl_col3.selectbox("Presentación", presentaciones_list, key="dash_presentacion")
+
+            # --- APLICAR FILTROS ---
             df_vis = df_dash.copy()
 
             if ft_rubro != "Todos":
                 df_vis = df_vis[df_vis['Rubro'] == ft_rubro]
-            if ft_marca != "Todos":
+            if ft_marca != "Todas":
                 df_vis = df_vis[df_vis['Marca'] == ft_marca]
+
+            # Filtrado específico de Pañales
+            if ft_rubro in ["PAÑALES", "PAÑALES ADULTOS"]:
+                if ft_talle != "Todos" and 'Talle' in df_vis.columns:
+                    df_vis = df_vis[df_vis['Talle'].astype(str) == ft_talle]
+                if ft_linea != "Todas" and 'Linea' in df_vis.columns:
+                    df_vis = df_vis[df_vis['Linea'].astype(str) == ft_linea]
+                if ft_tam_paq != "Todos" and 'Tamano_Paquete' in df_vis.columns:
+                    df_vis = df_vis[df_vis['Tamano_Paquete'].astype(str) == ft_tam_paq]
+
+            # Filtrado específico de Leche
+            elif ft_rubro == "LECHE":
+                if ft_etapa != "Todas" and 'Etapa' in df_vis.columns:
+                    df_vis = df_vis[df_vis['Etapa'].astype(str) == ft_etapa]
+                if ft_formato_leche != "Todos" and 'Formato_Leche' in df_vis.columns:
+                    df_vis = df_vis[df_vis['Formato_Leche'].astype(str) == ft_formato_leche]
+                if ft_presentacion != "Todas" and 'Presentacion' in df_vis.columns:
+                    df_vis = df_vis[df_vis['Presentacion'].astype(str) == ft_presentacion]
 
             # --- FILTRADO POR PROVEEDOR (Soporta múltiples proveedores por celda) ---
             if ft_prov != "Todos":
@@ -4364,6 +4789,7 @@ else:
                     }, na_rep="-"),
                     use_container_width=True, hide_index=True
                 )
+        
     # =====================================================================
     # MODULO: 🚚 PROVEEDORES
     # =====================================================================
