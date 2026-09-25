@@ -2701,7 +2701,25 @@ else:
                 df_filtrado = df_filtrado.sort_values(by='Nombre', key=lambda col: col.str.lower(), ascending=True)
         
             df_para_wsp = df_filtrado.copy()
-        
+
+            # -------------------------------------------------------------
+            # 📊 RESUMEN / VALORIZACIÓN DE STOCK (SOLO ADMINISTRADOR)
+            # -------------------------------------------------------------
+            if st.session_state.get('rol') == "Administrador":
+                # Aseguramos conversión limpia a tipos numéricos para el cálculo
+                precio_col = pd.to_numeric(df_filtrado.get('Precio_1', 0), errors='coerce').fillna(0)
+                stock_col = pd.to_numeric(df_filtrado.get('Stock_Actual', 0), errors='coerce').fillna(0)
+                
+                # Sumatoria total: Precio_1 * Stock_Actual
+                total_valorizado = (precio_col * stock_col).sum()
+                total_unidades = stock_col.sum()
+                
+                # Muestra visual con métricas de Streamlit
+                m1, m2 = st.columns(2)
+                m1.metric("💰 Valor Total del Stock (Filtrado)", f"${total_valorizado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                m2.metric("📦 Cantidad Total de Unidades", f"{int(total_unidades):,}".replace(",", "."))
+                st.markdown("---")
+
             # Ajuste de columnas visibles según el rol
             if st.session_state.rol != "Administrador":
                 cols_vendedor = ['Nombre', 'Precio_1', 'Precio_2', 'Precio_3', 'Talle', 'Linea', 'Etapa', 'Formato_Leche', 'Presentacion']
