@@ -929,50 +929,46 @@ else:
             # Forzamos a que Streamlit nos muestre el error real en pantalla si llega a fallar
             st.error(f"🚨 Error crítico al guardar en auditoría: {e}")
 
-    def actualizar_estados_por_stock_maximo(db):
-        """
-        Regla:
-        - INACTIVO: Si Stock_Max es 0 (o None) Y Stock_Actual es 0.
-        - ACTIVO: Cualquier otro caso.
-        """
-        try:
-            # Traemos los campos necesarios de la tabla
-            prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Stock_Max, Estado").execute().data
-            
-            prods_a_inactivar = []
-            prods_a_activar = []
-            
-            for p in prods:
-                cod = p.get("ID_Producto")
-                stock = int(p.get("Stock_Actual") or 0)
-                stock_max = p.get("Stock_Max")
-                estado_actual = p.get("Estado", "ACTIVO")
-                
-                # Verificamos si Stock_Max es 0 o nulo/vacío
-                sin_stock_max = (stock_max is None or str(stock_max).strip() in ["", "0", "None"])
-                
-                if sin_stock_max and stock == 0:
-                    if estado_actual != "INACTIVO":
-                        prods_a_inactivar.append(cod)
-                else:
-                    if estado_actual != "ACTIVO":
-                        prods_a_activar.append(cod)
-                        
-            # Actualizaciones en la base de datos
-            for cod in prods_a_inactivar:
-                db.table("PRODUCTOS").update({"Estado": "INACTIVO"}).eq("ID_Producto", cod).execute()
-                
-            for cod in prods_a_activar:
-                db.table("PRODUCTOS").update({"Estado": "ACTIVO"}).eq("ID_Producto", cod).execute()
-                
-            st.success(f"✅ Estados actualizados por Stock Máximo: {len(prods_a_inactivar)} inhabilitados, {len(prods_a_activar)} reactivados.")
-            
-            # Limpiamos caché de sesión para refrescar las listas
-            if 'df_prod' in st.session_state:
-                del st.session_state['df_prod']
-                
-        except Exception as e:
-            st.error(f"Error al actualizar estados por stock máximo: {e}")
+    # def actualizar_estados_por_stock_maximo(db):
+    #     """
+    #     Regla:
+    #     - INACTIVO: Si Stock_Max es 0 (o None) Y Stock_Actual es 0.
+    #     - ACTIVO: Cualquier otro caso.
+    #     """
+    #     try:
+    #         prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Stock_Max, Estado").execute().data
+    #         
+    #         prods_a_inactivar = []
+    #         prods_a_activar = []
+    #         
+    #         for p in prods:
+    #             cod = p.get("ID_Producto")
+    #             stock = int(p.get("Stock_Actual") or 0)
+    #             stock_max = p.get("Stock_Max")
+    #             estado_actual = p.get("Estado", "ACTIVO")
+    #             
+    #             sin_stock_max = (stock_max is None or str(stock_max).strip() in ["", "0", "None"])
+    #             
+    #             if sin_stock_max and stock == 0:
+    #                 if estado_actual != "INACTIVO":
+    #                     prods_a_inactivar.append(cod)
+    #             else:
+    #                 if estado_actual != "ACTIVO":
+    #                     prods_a_activar.append(cod)
+    #                     
+    #         for cod in prods_a_inactivar:
+    #             db.table("PRODUCTOS").update({"Estado": "INACTIVO"}).eq("ID_Producto", cod).execute()
+    #             
+    #         for cod in prods_a_activar:
+    #             db.table("PRODUCTOS").update({"Estado": "ACTIVO"}).eq("ID_Producto", cod).execute()
+    #             
+    #         st.success(f"✅ Estados actualizados por Stock Máximo: {len(prods_a_inactivar)} inhabilitados, {len(prods_a_activar)} reactivados.")
+    #         
+    #         if 'df_prod' in st.session_state:
+    #             del st.session_state['df_prod']
+    #             
+    #     except Exception as e:
+    #         st.error(f"Error al actualizar estados por stock máximo: {e}")
 
     @st.cache_data(ttl=600)
     def cargar_puntos_reparto():
@@ -2407,146 +2403,163 @@ else:
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
 
-            # --- BLOQUE TEMPORAL: INACTIVAR POR STOCK MÁXIMO EN 0 ---
-            # Comentar este bloque una vez utilizado.
-            with st.expander("🛠️ Herramienta: Inactivar por Stock Máximo Cero", expanded=False):
-                st.info("Pasa a INACTIVO los productos sin stock actual y con Stock Máximo en 0.")
-                if st.button("🚀 Ejecutar Inactivación por Stock Máximo", key="btn_inactivar_max_cero"):
-                    with st.spinner("Procesando catálogo..."):
-                        actualizar_estados_por_stock_maximo(db)
-                        st.rerun()
-            # --------------------------------------------------------
+            # --- BOTÓN DE INTERFAZ EN STREAMLIT ---
+            # with st.expander("🛠️ Herramienta: Inactivar por Stock Máximo Cero", expanded=False):
+            #     st.info("Pasa a INACTIVO los productos sin stock actual y con Stock Máximo en 0.")
+            #     if st.button("🚀 Ejecutar Inactivación por Stock Máximo", key="btn_inactivar_max_cero"):
+            #         with st.spinner("Procesando catálogo..."):
+            #             actualizar_estados_por_stock_maximo(db)
+            #             st.rerun()
+            # ==============================================================================
             
-            # -------------------------------------------------------------
-            # 🪄 HERRAMIENTA TEMPORAL DE AUTO-CLASIFICACIÓN (SOLO ADMIN)
-            # -------------------------------------------------------------
-            if st.session_state.get('rol') == "Administrador":
-                with st.expander("🛠️ Herramienta de Mantenimiento BD: Auto-clasificar Atributos (Solo Pañales y Leches)"):
-                    st.caption("Aplica la auto-clasificación ÚNICAMENTE a los productos de los rubros: PAÑALES, PAÑALES ADULTOS y LECHE.")
-                    
-                    if st.button("🪄 Ejecutar Auto-clasificación Filtrada", type="secondary", key="btn_run_autoclass"):
-                        import re
-                        
-                        def clasificar_producto(nombre, rubro="", marca=""):
-                            nombre_str = str(nombre).upper().strip()
-                            rubro_str = str(rubro).upper().strip()
-                            marca_str = str(marca).upper().strip()
-                            
-                            linea, talle, tamanio_paquete, tipo = None, None, None, None
-                            etapa, formato_leche, presentacion = None, None, None
-        
-                            # Verificamos pertenencia estricta de rubro
-                            rubros_validos_panal = ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
-                            rubros_validos_leche = ["LECHE", "LECHES"]
-                            
-                            es_rubro_panal = any(rubro_str == r for r in rubros_validos_panal)
-                            # Excluimos expresamente "SACALECHES" o "SACALECHE"
-                            es_rubro_leche = any(rubro_str == r for r in rubros_validos_leche) and "SACALECHE" not in rubro_str
-        
-                            if not (es_rubro_panal or es_rubro_leche):
-                                return {
-                                    "Linea": None, "Talle": None, "Tamanio_Paquete": None, "Tipo": None,
-                                    "Etapa": None, "Formato_Leche": None, "Presentacion": None
-                                }
-        
-                            # --- PAÑALES (Bebé y Adulto) ---
-                            if es_rubro_panal:
-                                tipo = "Pants" if ("PANTS" in nombre_str or "PANT" in nombre_str) else "Con Abrojo"
-        
-                                match_talle = re.search(r'\b(PR|RN|XXXG|XXG|XG|JUNIOR|EG|EEG|CH|P|M|G)\b', nombre_str)
-                                if match_talle:
-                                    talle = match_talle.group(1)
-        
-                                marca_ref = marca_str if marca_str else nombre_str.split()[0]
-                                if marca_ref in nombre_str and talle:
-                                    patron_linea = rf'{re.escape(marca_ref)}\s+(.*?)\s+{re.escape(talle)}'
-                                    match_linea = re.search(patron_linea, nombre_str)
-                                    if match_linea:
-                                        texto_intermedio = match_linea.group(1).strip()
-                                        texto_intermedio = re.sub(r'\b(PANTS|PANT|ANATOMICO|ANATOMICOS)\b', '', texto_intermedio).strip()
-                                        linea = texto_intermedio.title() if texto_intermedio else "Clasica"
-                                    else:
-                                        linea = "Clasica"
-                                else:
-                                    linea = "Clasica"
-        
-                                match_cant = re.search(r'X(\d{1,3})\b', nombre_str)
-                                if match_cant:
-                                    cant = int(match_cant.group(1))
-                                    if cant <= 16:
-                                        tamanio_paquete = "Regular"
-                                    elif 20 <= cant <= 50:
-                                        tamanio_paquete = "Hiperpack"
-                                    elif 52 <= cant <= 80:
-                                        tamanio_paquete = "Pack Ahorro"
-                                    elif cant >= 88:
-                                        tamanio_paquete = "Pack Mensual"
-        
-                            # --- LECHES ---
-                            if es_rubro_leche:
-                                # 1. Etapa (1, 2, 3, 4, Escolar, Común)
-                                match_etapa = re.search(r'\b(1|2|3|4)\b', nombre_str)
-                                if match_etapa:
-                                    etapa = f"Etapa {match_etapa.group(1)}"
-                                elif "ESCOLAR" in nombre_str:
-                                    etapa = "Escolar"
-                                else:
-                                    etapa = "Común / Toda la familia"
-        
-                                # 2. Extraemos el volumen / peso del patrón X(número)
-                                match_pres = re.search(r'X(\d{3,4})\b', nombre_str)
-                                val_num = int(match_pres.group(1)) if match_pres else None
-        
-                                # Regla de Formato y Presentación
-                                if "X1LT" in nombre_str or "1LT" in nombre_str:
-                                    formato_leche = "Líquida"
-                                    presentacion = "1 Lt"
-                                elif val_num is not None:
-                                    if val_num == 125:
-                                        formato_leche = "En Polvo"
-                                        presentacion = "125 grs"
-                                    elif val_num in [190, 200, 500] or "LIQUIDA" in nombre_str:
-                                        formato_leche = "Líquida"
-                                        presentacion = f"{val_num} ml"
-                                    else:
-                                        formato_leche = "En Polvo"
-                                        if val_num == 1200:
-                                            presentacion = "1.2 kg"
-                                        elif val_num == 1000:
-                                            presentacion = "1 kg"
-                                        elif val_num in [400, 800]:
-                                            presentacion = f"{val_num} grs"
-                                        else:
-                                            presentacion = f"{val_num} grs" if val_num > 100 else None
-                                else:
-                                    formato_leche = "Líquida" if "LIQUIDA" in nombre_str else "En Polvo"
-                                    presentacion = None
-        
-                            return {
-                                "Linea": linea,
-                                "Talle": talle,
-                                "Tamanio_Paquete": tamanio_paquete,
-                                "Tipo": tipo,
-                                "Etapa": etapa,
-                                "Formato_Leche": formato_leche,
-                                "Presentacion": presentacion
-                            }
-        
-                        with st.spinner("Actualizando únicamente rubros PAÑALES, PAÑALES ADULTOS y LECHE..."):
-                            res = db.table("PRODUCTOS").select("ID_Producto, Nombre, Rubro, Marca").execute()
-                            productos = res.data or []
-                            
-                            procesados = 0
-                            for prod in productos:
-                                id_prod = prod["ID_Producto"]
-                                datos_nuevos = clasificar_producto(prod.get("Nombre", ""), prod.get("Rubro", ""), prod.get("Marca", ""))
-                                db.table("PRODUCTOS").update(datos_nuevos).eq("ID_Producto", id_prod).execute()
-                                procesados += 1
-                            
-                            st.success(f"¡Se actualizó el catálogo completando los 3 rubros con la nueva lógica posicional de líneas!")
-                            if 'df_prod' in st.session_state:
-                                del st.session_state['df_prod']
-                            st.rerun()
+            # ==============================================================================
+            # ==============================================================================
+            # --- HERRAMIENTA TEMPORAL DE MANTENIMIENTO: AUTO-CLASIFICACIÓN (SOLO ADMIN) ---
+            # Guardado de referencia. Descomentar si se requiere re-clasificar masivamente.
+            # ==============================================================================
+            
+            # if st.session_state.get('rol') == "Administrador":
+            #     with st.expander("🛠️ Herramienta de Mantenimiento BD: Auto-clasificar Atributos (Solo Pañales y Leches)"):
+            #         st.caption("Aplica la auto-clasificación ÚNICAMENTE a los productos de los rubros: PAÑALES, PAÑALES ADULTOS y LECHE.")
+            #         
+            #         if st.button("🪄 Ejecutar Auto-clasificación Filtrada", type="secondary", key="btn_run_autoclass"):
+            #             import re
+            #             
+            #             def clasificar_producto(nombre, rubro="", marca=""):
+            #                 # Normalizamos a mayúsculas y eliminamos espacios sobrantes para evitar errores de coincidencia
+            #                 nombre_str = str(nombre).upper().strip()
+            #                 rubro_str = str(rubro).upper().strip()
+            #                 marca_str = str(marca).upper().strip()
+            #                 
+            #                 # Inicializamos las variables de atributos en None
+            #                 linea, talle, tamanio_paquete, tipo = None, None, None, None
+            #                 etapa, formato_leche, presentacion = None, None, None
+            # 
+            #                 # Definimos las listas de rubros válidos admitidos para la regla
+            #                 rubros_validos_panal = ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+            #                 rubros_validos_leche = ["LECHE", "LECHES"]
+            #                 
+            #                 # Validamos la pertenencia estricta del rubro
+            #                 es_rubro_panal = any(rubro_str == r for r in rubros_validos_panal)
+            #                 # Excluimos expresamente artículos como "SACALECHES" o "SACALECHE"
+            #                 es_rubro_leche = any(rubro_str == r for r in rubros_validos_leche) and "SACALECHE" not in rubro_str
+            # 
+            #                 # Si no pertenece a ninguno de los rubros permitidos, devolvemos campos vacíos
+            #                 if not (es_rubro_panal or es_rubro_leche):
+            #                     return {
+            #                         "Linea": None, "Talle": None, "Tamanio_Paquete": None, "Tipo": None,
+            #                         "Etapa": None, "Formato_Leche": None, "Presentacion": None
+            #                     }
+            # 
+            #                 # --- PROCESAMIENTO: PAÑALES (Bebé y Adulto) ---
+            #                 if es_rubro_panal:
+            #                     # Definimos el tipo según mención en el nombre
+            #                     tipo = "Pants" if ("PANTS" in nombre_str or "PANT" in nombre_str) else "Con Abrojo"
+            # 
+            #                     # Buscamos el talle mediante expresiones regulares delimitadas por límites de palabras
+            #                     match_talle = re.search(r'\b(PR|RN|XXXG|XXG|XG|JUNIOR|EG|EEG|CH|P|M|G)\b', nombre_str)
+            #                     if match_talle:
+            #                         talle = match_talle.group(1)
+            # 
+            #                     # Determinamos la línea comercial del producto
+            #                     marca_ref = marca_str if marca_str else nombre_str.split()[0]
+            #                     if marca_ref in nombre_str and talle:
+            #                         patron_linea = rf'{re.escape(marca_ref)}\s+(.*?)\s+{re.escape(talle)}'
+            #                         match_linea = re.search(patron_linea, nombre_str)
+            #                         if match_linea:
+            #                             texto_intermedio = match_linea.group(1).strip()
+            #                             texto_intermedio = re.sub(r'\b(PANTS|PANT|ANATOMICO|ANATOMICOS)\b', '', texto_intermedio).strip()
+            #                             linea = texto_intermedio.title() if texto_intermedio else "Clasica"
+            #                         else:
+            #                             linea = "Clasica"
+            #                     else:
+            #                         linea = "Clasica"
+            # 
+            #                     # Determinamos el tamaño del paquete según la cantidad de unidades (patrón X seguido de número)
+            #                     match_cant = re.search(r'X(\d{1,3})\b', nombre_str)
+            #                     if match_cant:
+            #                         cant = int(match_cant.group(1))
+            #                         if cant <= 16:
+            #                             tamanio_paquete = "Regular"
+            #                         elif 20 <= cant <= 50:
+            #                             tamanio_paquete = "Hiperpack"
+            #                         elif 52 <= cant <= 80:
+            #                             tamanio_paquete = "Pack Ahorro"
+            #                         elif cant >= 88:
+            #                             tamanio_paquete = "Pack Mensual"
+            # 
+            #                 # --- PROCESAMIENTO: LECHES ---
+            #                 if es_rubro_leche:
+            #                     # 1. Extracción de etapa de crecimiento
+            #                     match_etapa = re.search(r'\b(1|2|3|4)\b', nombre_str)
+            #                     if match_etapa:
+            #                         etapa = f"Etapa {match_etapa.group(1)}"
+            #                     elif "ESCOLAR" in nombre_str:
+            #                         etapa = "Escolar"
+            #                     else:
+            #                         etapa = "Común / Toda la familia"
+            # 
+            #                     # 2. Extracción de volumen o peso del producto
+            #                     match_pres = re.search(r'X(\d{3,4})\b', nombre_str)
+            #                     val_num = int(match_pres.group(1)) if match_pres else None
+            # 
+            #                     # Reglas específicas para clasificar formato y presentación
+            #                     if "X1LT" in nombre_str or "1LT" in nombre_str:
+            #                         formato_leche = "Líquida"
+            #                         presentacion = "1 Lt"
+            #                     elif val_num is not None:
+            #                         if val_num == 125:
+            #                             formato_leche = "En Polvo"
+            #                             presentacion = "125 grs"
+            #                         elif val_num in [190, 200, 500] or "LIQUIDA" in nombre_str:
+            #                             formato_leche = "Líquida"
+            #                             presentacion = f"{val_num} ml"
+            #                         else:
+            #                             formato_leche = "En Polvo"
+            #                             if val_num == 1200:
+            #                                 presentacion = "1.2 kg"
+            #                             elif val_num == 1000:
+            #                                 presentacion = "1 kg"
+            #                             elif val_num in [400, 800]:
+            #                                 presentacion = f"{val_num} grs"
+            #                             else:
+            #                                 presentacion = f"{val_num} grs" if val_num > 100 else None
+            #                     else:
+            #                         formato_leche = "Líquida" if "LIQUIDA" in nombre_str else "En Polvo"
+            #                         presentacion = None
+            # 
+            #                 # Retornamos el diccionario completo con los atributos analizados
+            #                 return {
+            #                     "Linea": linea,
+            #                     "Talle": talle,
+            #                     "Tamanio_Paquete": tamanio_paquete,
+            #                     "Tipo": tipo,
+            #                     "Etapa": etapa,
+            #                     "Formato_Leche": formato_leche,
+            #                     "Presentacion": presentacion
+            #                 }
+            # 
+            #             # Ejecución masiva sobre la base de datos con indicador visual de carga
+            #             with st.spinner("Actualizando únicamente rubros PAÑALES, PAÑALES ADULTOS y LECHE..."):
+            #                 res = db.table("PRODUCTOS").select("ID_Producto, Nombre, Rubro, Marca").execute()
+            #                 productos = res.data or []
+            #                 
+            #                 procesados = 0
+            #                 for prod in productos:
+            #                     id_prod = prod["ID_Producto"]
+            #                     # Calculamos los atributos en base al nombre, rubro y marca actuales
+            #                     datos_nuevos = clasificar_producto(prod.get("Nombre", ""), prod.get("Rubro", ""), prod.get("Marca", ""))
+            #                     # Actualizamos registro por registro en Supabase
+            #                     db.table("PRODUCTOS").update(datos_nuevos).eq("ID_Producto", id_prod).execute()
+            #                     procesados += 1
+            #                 
+            #                 st.success("¡Se actualizó el catálogo completando los 3 rubros con la nueva lógica posicional de líneas!")
+            #                 
+            #                 # Limpiamos la caché del dataframe en sesión para forzar la recarga de datos frescos
+            #                 if 'df_prod' in st.session_state:
+            #                     del st.session_state['df_prod']
+            #                 st.rerun()
+            # ==============================================================================
         
             # -------------------------------------------------------------
             # 0️⃣ CÁLCULO EN TIEMPO REAL DEL STOCK RESERVADO EN PENDIENTES
