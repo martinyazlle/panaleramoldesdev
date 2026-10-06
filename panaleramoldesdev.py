@@ -14,6 +14,7 @@ from math import radians, cos, sin, asin, sqrt
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 from modulos import reportes
+from modulos.modulo_desempenio import render_modulo_desempenio
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
