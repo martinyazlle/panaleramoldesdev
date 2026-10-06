@@ -929,15 +929,15 @@ else:
             # Forzamos a que Streamlit nos muestre el error real en pantalla si llega a fallar
             st.error(f"🚨 Error crítico al guardar en auditoría: {e}")
 
-    def actualizar_estados_productos(db):
+    def actualizar_estados_por_stock_maximo(db):
         """
         Regla:
-        - INACTIVO: Si Stock_Min es NULL / None / 0 Y Stock_Actual es 0.
-        - ACTIVO: Cualquier otro caso (incluye productos 'clavo' con stock > 0).
+        - INACTIVO: Si Stock_Max es 0 (o None) Y Stock_Actual es 0.
+        - ACTIVO: Cualquier otro caso.
         """
         try:
-            # Traemos todos los productos con los nombres reales de tus columnas
-            prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Stock_Min, Estado").execute().data
+            # Traemos los campos necesarios de la tabla
+            prods = db.table("PRODUCTOS").select("ID_Producto, Stock_Actual, Stock_Max, Estado").execute().data
             
             prods_a_inactivar = []
             prods_a_activar = []
@@ -945,13 +945,13 @@ else:
             for p in prods:
                 cod = p.get("ID_Producto")
                 stock = int(p.get("Stock_Actual") or 0)
-                stock_min = p.get("Stock_Min")
+                stock_max = p.get("Stock_Max")
                 estado_actual = p.get("Estado", "ACTIVO")
                 
-                # Verificamos si Stock_Min es nulo o 0
-                sin_stock_min = (stock_min is None or str(stock_min).strip() in ["", "0", "None"])
+                # Verificamos si Stock_Max es 0 o nulo/vacío
+                sin_stock_max = (stock_max is None or str(stock_max).strip() in ["", "0", "None"])
                 
-                if sin_stock_min and stock == 0:
+                if sin_stock_max and stock == 0:
                     if estado_actual != "INACTIVO":
                         prods_a_inactivar.append(cod)
                 else:
@@ -965,14 +965,14 @@ else:
             for cod in prods_a_activar:
                 db.table("PRODUCTOS").update({"Estado": "ACTIVO"}).eq("ID_Producto", cod).execute()
                 
-            st.success(f"✅ Estados actualizados: {len(prods_a_inactivar)} inhabilitados, {len(prods_a_activar)} reactivados.")
+            st.success(f"✅ Estados actualizados por Stock Máximo: {len(prods_a_inactivar)} inhabilitados, {len(prods_a_activar)} reactivados.")
             
             # Limpiamos caché de sesión para refrescar las listas
             if 'df_prod' in st.session_state:
                 del st.session_state['df_prod']
                 
         except Exception as e:
-            st.error(f"Error al actualizar estados: {e}")
+            st.error(f"Error al actualizar estados por stock máximo: {e}")
 
     @st.cache_data(ttl=600)
     def cargar_puntos_reparto():
@@ -1079,7 +1079,7 @@ else:
 
     # --- SIDEBAR CON PERMISOS ---
     with st.sidebar:
-        st.title("🛡️ Pañalera Moldes")
+        st.title("🛡️️ Pañalera Moldes")
         st.write(f"👤 Usuario: {st.session_state.usuario_actual}")
         st.write(f"💼 Rol: {st.session_state.rol}")
         
@@ -1087,15 +1087,18 @@ else:
         opciones_disponibles = ["💰 Caja"]
         
         if st.session_state.rol == "Administrador":
-            # Agregamos "📈 Reporte de Utilidades" a la lista
             opciones_disponibles.extend([
                 "🛒 Punto de Venta", "👥 Clientes", "📋 Historial de Ventas", 
                 "⚙️ Configuración Pagos", "📦 Productos",
                 "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", 
-                "⚙️ Auditoría", "📈 Reporte de Utilidades", "🚚 Gestión de Repartos", "📊 Reportes" # <--- AQUÍ LO AGREGAMOS
+                "⚙️ Auditoría", "📈 Reporte de Utilidades", "🚚 Gestión de Repartos", 
+                "📊 Reportes", "🛡️ Desempeño y Tareas"
             ])
         elif st.session_state.rol == "Vendedor":
-            opciones_disponibles.extend(["🛒 Punto de Venta", "🚚 Gestión de Repartos", "📦 Productos", "👥 Clientes"])
+            opciones_disponibles.extend([
+                "🛒 Punto de Venta", "🚚 Gestión de Repartos", "📦 Productos", 
+                "👥 Clientes", "🛡️ Desempeño y Tareas"
+            ])
         
         menu = st.selectbox("Menú Principal", opciones_disponibles)
         
@@ -2403,6 +2406,16 @@ else:
         # --- PESTAÑA BUSCAR ---
         with tab_buscar:
             st.subheader("🔍 Buscador de Productos")
+
+            # --- BLOQUE TEMPORAL: INACTIVAR POR STOCK MÁXIMO EN 0 ---
+            # Comentar este bloque una vez utilizado.
+            with st.expander("🛠️ Herramienta: Inactivar por Stock Máximo Cero", expanded=False):
+                st.info("Pasa a INACTIVO los productos sin stock actual y con Stock Máximo en 0.")
+                if st.button("🚀 Ejecutar Inactivación por Stock Máximo", key="btn_inactivar_max_cero"):
+                    with st.spinner("Procesando catálogo..."):
+                        actualizar_estados_por_stock_maximo(db)
+                        st.rerun()
+            # --------------------------------------------------------
             
             # -------------------------------------------------------------
             # 🪄 HERRAMIENTA TEMPORAL DE AUTO-CLASIFICACIÓN (SOLO ADMIN)
@@ -5966,3 +5979,9 @@ else:
     # =====================================================================
     elif menu == "📊 Reportes":
         reportes.render_reportes(db)
+
+    # =====================================================================
+    # MODULO: 🛡️ DESEMPEÑO Y TAREAS
+    # =====================================================================
+    elif menu == "🛡️ Desempeño y Tareas":
+        render_modulo_desempenio(db)
