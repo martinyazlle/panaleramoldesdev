@@ -4303,7 +4303,7 @@ else:
                 filtro_etapa_abc = c_l1.selectbox("Etapa", opts_etapas, key="f_etapa_abc")
                 filtro_formato_abc = c_l2.selectbox("Formato", opts_formatos, key="f_formato_abc")
                 filtro_pres_abc = c_l3.selectbox("Presentación", opts_pres, key="f_pres_abc")
-            
+        
             dias_analisis = st.slider("Días de historia de ventas para scoring:", min_value=15, max_value=90, value=60, step=15, key="slider_dias_abc")
         
             # Traemos solo los campos estándar de VENTAS_DETALLE
@@ -4374,13 +4374,15 @@ else:
                     
                     df_vd['ID_Producto'] = df_vd['ID_Producto'].astype(str)
                     
-                    df_costos = df_prod[['ID_Producto', 'Precio_Costo_Unitario']].copy()
+                    # Ajustado para usar Precio_Costo directo
+                    col_costo_prod = 'Precio_Costo' if 'Precio_Costo' in df_prod.columns else 'Precio_Costo_Unitario'
+                    df_costos = df_prod[['ID_Producto', col_costo_prod]].copy()
                     df_costos['ID_Producto'] = df_costos['ID_Producto'].astype(str)
                     
                     df_vd = pd.merge(df_vd, df_costos, on='ID_Producto', how='left')
-                    df_vd['Precio_Costo_Unitario'] = df_vd['Precio_Costo_Unitario'].fillna(0)
+                    df_vd[col_costo_prod] = df_vd[col_costo_prod].fillna(0)
         
-                    df_vd['Ganancia_Real'] = df_vd['Subtotal'] - (df_vd['Cantidad'] * df_vd['Precio_Costo_Unitario'])
+                    df_vd['Ganancia_Real'] = df_vd['Subtotal'] - (df_vd['Cantidad'] * df_vd[col_costo_prod])
         
                     agrupado = df_vd.groupby('ID_Producto').agg({
                         'Cantidad': 'sum',
@@ -4447,8 +4449,15 @@ else:
                 ).reset_index(drop=True)
         
                 df_ranking['Pedir'] = df_ranking['Urgencia_%'] > 0
-                
-                cols_abc_mostrar = ['Pedir', 'Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Stock_Min', 'Faltante_Min', 'Score_Comercial']
+        
+                # --- PREPARACIÓN Y CONFIGURACIÓN DE TABLA EDITABLE ---
+                if 'Precio_Costo' in df_ranking.columns:
+                    df_ranking['Precio_Costo'] = pd.to_numeric(df_ranking['Precio_Costo'], errors='coerce').fillna(0.0)
+                else:
+                    df_ranking['Precio_Costo'] = 0.0
+        
+                # Sin 'Stock_Min' y agregando 'Precio_Costo' a la derecha de 'Faltante_Min'
+                cols_abc_mostrar = ['Pedir', 'Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Faltante_Min', 'Precio_Costo', 'Score_Comercial']
                 cols_abc_presentes = [c for c in cols_abc_mostrar if c in df_ranking.columns]
         
                 st.markdown("---")
@@ -4462,11 +4471,11 @@ else:
                         "Nombre": st.column_config.TextColumn("Producto"),
                         "Urgencia_%": st.column_config.NumberColumn("Urgencia (%)", format="%.0f%%"),
                         "Stock_Actual": st.column_config.NumberColumn("Stock Act."),
-                        "Stock_Min": st.column_config.NumberColumn("Mínimo"),
                         "Faltante_Min": st.column_config.NumberColumn("Faltante a Mín."),
+                        "Precio_Costo": st.column_config.NumberColumn("Costo Unit.", format="$%.2f"),
                         "Score_Comercial": st.column_config.NumberColumn("Score", format="%.1f pts")
                     },
-                    disabled=['Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Stock_Min', 'Faltante_Min', 'Score_Comercial'],
+                    disabled=['Categoria_ABC', 'Nombre', 'Urgencia_%', 'Stock_Actual', 'Faltante_Min', 'Precio_Costo', 'Score_Comercial'],
                     hide_index=True,
                     use_container_width=True,
                     key="editor_tabla_abc"
@@ -4480,25 +4489,20 @@ else:
                     if sel_abc.empty:
                         st.warning("⚠️ No seleccionaste ningún producto. Tildá las casillas en la columna '📱 Pedir'.")
                     else:
-                        # --- ORDENAMIENTO PERSONALIZADO POR TALLE PARA WHATSAPP ---
-                        orden_talles = ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "Junior", "CH", "EG", "EEG"]
-                        
-                        if 'Talle' in df_ranking.columns:
-                            sel_abc['Talle'] = df_ranking.loc[sel_abc.index, 'Talle'].astype(str).str.strip()
-                            sel_abc['Talle_Cat'] = pd.Categorical(
-                                sel_abc['Talle'], 
-                                categories=orden_talles, 
-                                ordered=True
-                            )
-                            sel_abc = sel_abc.sort_values(by=['Talle_Cat', 'Nombre'], na_position='last')
+                        # --- ASIGNACIÓN DE RUBRO Y ORDENAMIENTO ALFABÉTICO (RUBRO -> NOMBRE) ---
+                        if 'Rubro' in df_ranking.columns:
+                            sel_abc['Rubro'] = df_ranking.loc[sel_abc.index, 'Rubro'].astype(str).str.strip().str.upper()
+                        else:
+                            sel_abc['Rubro'] = ""
+        
+                        # Ordenamos primero por Rubro (A-Z) y luego por Nombre (A-Z)
+                        sel_abc = sel_abc.sort_values(by=['Rubro', 'Nombre'], ascending=[True, True])
         
                         msg_abc = ""
                         for _, r in sel_abc.iterrows():
                             cant_comprar = int(r['Faltante_Min']) if r['Faltante_Min'] > 0 else 1
                             
-                            # Identificar si es leche vía df_ranking
-                            idx = r.name
-                            rubro_prod = str(df_ranking.loc[idx, 'Rubro']).strip().upper() if 'Rubro' in df_ranking.columns and idx in df_ranking.index else ""
+                            rubro_prod = str(r['Rubro']).strip().upper()
                             
                             if rubro_prod == "LECHE":
                                 unid_texto = "fardo" if cant_comprar == 1 else "fardos"
