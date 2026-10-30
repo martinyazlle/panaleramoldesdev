@@ -636,31 +636,34 @@ else:
             destino_final=punto_destino
         )
         
-        # 2. Inicializamos el estado del orden
+        # Inicializamos el estado del orden si no existe
         if f"orden_{fecha}" not in st.session_state:
-            st.session_state[f"orden_{fecha}"] = {v['Cliente']: i+1 for i, v in enumerate(ruta_optima)}
+            st.session_state[f"orden_{fecha}"] = {
+                f"{v.get('ID_Venta', i)}_{v['Cliente']}": i + 1 
+                for i, v in enumerate(ruta_optima)
+            }
     
-        st.write("### 🗺️ Previsualización de Ruta")
+        st.write("### 🗺️ Previsualización y Gestión de Ruta")
     
-        # 1. Blindaje: Verificamos si hay datos antes de intentar crear el mapa
         if not ruta_optima:
             st.warning("No hay suficientes datos con coordenadas para mostrar el mapa.")
-        else:
-            # Creamos el DataFrame y forzamos a que las coordenadas sean números
+            return
+    
+        # Creamos las DOS COLUMNAS PRINCIPALES (Columna 1: Mapa | Columna 2: Ordenamiento)
+        col_mapa, col_orden = st.columns([1.2, 1.0], gap="medium")
+    
+        # --- COLUMNA IZQUIERDA: MAPA ---
+        with col_mapa:
+            st.markdown("##### 📍 Ubicación de Paradas")
             df_mapa = pd.DataFrame(ruta_optima)
             df_mapa['Latitud'] = pd.to_numeric(df_mapa['Latitud'], errors='coerce')
             df_mapa['Longitud'] = pd.to_numeric(df_mapa['Longitud'], errors='coerce')
-            
-            # Limpiamos filas con coordenadas nulas después de la conversión
             df_mapa = df_mapa.dropna(subset=['Latitud', 'Longitud'])
             
             if df_mapa.empty:
                 st.warning("No se pudieron procesar las coordenadas para el mapa.")
             else:
-                # Renombramos para PyDeck
                 df_mapa = df_mapa.rename(columns={'Latitud': 'lat', 'Longitud': 'lon'})
-                
-                # Creamos el mapa solo si hay datos válidos
                 st.pydeck_chart(pdk.Deck(
                     map_style=None,
                     initial_view_state=pdk.ViewState(
@@ -688,50 +691,74 @@ else:
                             get_pixel_offset='[0, -15]',
                         ),
                     ],
-                ))
+                ), use_container_width=True)
     
-        # Formulario de orden
-        with st.form(key=f"form_orden_{fecha}"):
-            orden_manual = {}
-            for idx, v in enumerate(ruta_optima):
-                orden_manual[v['Cliente']] = st.number_input(
-                    f"Orden para {v['Cliente']}", min_value=1, max_value=len(ruta_optima),
-                    value=st.session_state.get(f"pos_{v['Cliente']}_{fecha}", idx + 1)
-                )
-            submit = st.form_submit_button("Aplicar nuevo orden")
-            
-            if submit:
-                # Guardamos los nuevos valores en session_state
-                for cliente, valor in orden_manual.items():
-                    st.session_state[f"pos_{cliente}_{fecha}"] = valor
-                st.rerun() # Fuerza la recarga para que se ordene la lista
+        # --- COLUMNA DERECHA: FORMULARIO DE ORDENAMIENTO ---
+        with col_orden:
+            st.markdown("##### 🔢 Ajustar Orden")
+            with st.form(key=f"form_orden_{fecha}"):
+                orden_manual = {}
+                for idx, v in enumerate(ruta_optima):
+                    id_venta_raw = v.get('ID_Venta', f"P_{idx}")
+                    cliente_raw = str(v.get('Cliente', 'Parada')).replace(" ", "_")
+                    uid_parada = f"{idx}_{id_venta_raw}_{cliente_raw}"
+                    
+                    key_pos_state = f"pos_orden_{fecha}_{uid_parada}"
+                    val_defecto = st.session_state.get(key_pos_state, idx + 1)
+                    
+                    orden_manual[idx] = st.number_input(
+                        f"{v['Cliente']}", 
+                        min_value=1, 
+                        max_value=len(ruta_optima),
+                        value=int(val_defecto),
+                        key=f"input_num_{fecha}_{uid_parada}"
+                    )
+                
+                submit = st.form_submit_button("💾 Aplicar nuevo orden", use_container_width=True)
+                
+                if submit:
+                    for idx, valor in orden_manual.items():
+                        v = ruta_optima[idx]
+                        id_venta_raw = v.get('ID_Venta', f"P_{idx}")
+                        cliente_raw = str(v.get('Cliente', 'Parada')).replace(" ", "_")
+                        uid_parada = f"{idx}_{id_venta_raw}_{cliente_raw}"
+                        st.session_state[f"pos_orden_{fecha}_{uid_parada}"] = valor
+                    st.rerun()
     
-        # Generación de lista final
-        # Usamos el orden guardado en session_state o el original
-        ruta_reordenada = sorted(ruta_optima, key=lambda x: st.session_state.get(f"pos_{x['Cliente']}_{fecha}", 0))
+        # Función auxiliar para recuperar la posición ordenada
+        def obtener_posicion(idx_item, item):
+            id_venta_raw = item.get('ID_Venta', f"P_{idx_item}")
+            cliente_raw = str(item.get('Cliente', 'Parada')).replace(" ", "_")
+            uid_parada = f"{idx_item}_{id_venta_raw}_{cliente_raw}"
+            return st.session_state.get(f"pos_orden_{fecha}_{uid_parada}", idx_item + 1)
+    
+        # Ordenar la lista según la posición obtenida
+        ruta_reordenada = sorted(
+            list(enumerate(ruta_optima)), 
+            key=lambda pair: obtener_posicion(pair[0], pair[1])
+        )
+        ruta_reordenada = [pair[1] for pair in ruta_reordenada]
         
-        # 3. Mostrar resultados finales
+        st.divider()
+        
+        # 3. Mostrar resultados finales listos para WhatsApp
         st.write("### 🚚 Ruta Optimizada Final")
         texto_whatsapp = f"*DIAGRAMA DE REPARTOS {fecha}*\n\n"
         
-        # Se corrige la iteración sobre ruta_reordenada
         for i, row in enumerate(ruta_reordenada, start=1):
             cliente = row['Cliente']
             total = row.get('Total', 0)
             metodo_pago = row.get('Metodo_Pago', '')
             
-            # 1. Armamos la base de la línea
             linea = f"{i}. {cliente} ${total} {metodo_pago}"
             
-            # 2. Extraemos y validamos si existen observaciones
             obs = row.get('Observaciones', '')
             if pd.notna(obs) and str(obs).strip() and str(obs).strip().lower() not in ["nan", "none"]:
                 linea += f" *{str(obs).strip()}*"
                 
             texto_whatsapp += linea + "\n"
         
-        # Muestra el resultado listo para copiar
-        st.text_area("📋 Copiar para WhatsApp:", value=texto_whatsapp, height=200)
+        st.text_area("📋 Copiar para WhatsApp:", value=texto_whatsapp, height=200, key=f"area_txt_wsp_{fecha}")
     
     def extraer_coords_desde_link(link):
         # Busca el patrón @-XX.XXXX,-YY.YYYY en el link
