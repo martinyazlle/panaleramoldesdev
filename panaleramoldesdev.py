@@ -3227,11 +3227,17 @@ else:
                                     impacto_financiero_total = 0.0
                                     detalles_insertar_temp = []
                                     
+                                    # Variable auxiliar para saber si todo el inventario está perfecto sin diferencias
+                                    hay_diferencias = False
+                                    
                                     for prod_id, cont_cant in conteos_usuario.items():
                                         stock_snap = float(stock_map.get(str(prod_id), 0) or 0)
                                         costo_unitario = float(costo_map.get(str(prod_id), 0) or 0)
                                         
                                         dif = float(cont_cant) - stock_snap
+                                        if dif != 0:
+                                            hay_diferencias = True
+        
                                         impacto_item = dif * costo_unitario
                                         impacto_financiero_total += impacto_item
                                         
@@ -3246,18 +3252,21 @@ else:
                                             "estado_item": estado_inicial_item
                                         })
                                     
-                                    # 3. Insertar Registro Cabecera
+                                    # 3. REGLA DE AUTOMATIZACIÓN: Si impacto y diferencias son 0, pasa directo a REVISADO
+                                    estado_cabecera = "REVISADO" if (not hay_diferencias and round(impacto_financiero_total, 2) == 0.0) else "ENVIADO"
+        
+                                    # 4. Insertar Registro Cabecera con el estado dinámico
                                     res_cabecera = db.table("INVENTARIOS_CABECERA").insert({
                                         "tipo": "MARCA" if modo_conteo == "Por Marca" else "AZAR",
                                         "parametro": parametro_conteo,
                                         "vendedor": vendedor_nombre.strip(),
-                                        "estado": "ENVIADO",
+                                        "estado": estado_cabecera,  # <--- Aquí aplica ENVIADO o REVISADO automático
                                         "impactofinanciero": round(impacto_financiero_total, 2)
                                     }).execute()
                                     
                                     id_inv = res_cabecera.data[0]['id']
                                     
-                                    # 4. Asignar inventario_id e Insertar Detalles
+                                    # 5. Asignar inventario_id e Insertar Detalles
                                     for det in detalles_insertar_temp:
                                         det["inventario_id"] = id_inv
                                     
