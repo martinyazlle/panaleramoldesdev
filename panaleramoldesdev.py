@@ -5017,10 +5017,24 @@ else:
             margen = MARGENES_RUBROS.get(rubro, {"P1": 0.30, "P2": 0.25, "P3": 0.20, "P4": 0.15, "P5": 0.10}) # Default
             return costo * (1 + margen.get(tipo_precio, 0))
         
-        # 1. CARGA DE DATOS Y ESTADO
+        # --- 1. CARGA DE DATOS Y ESTADO ---
         df_prod = pd.DataFrame(db.table("PRODUCTOS").select("*").execute().data)
         df_prov = pd.DataFrame(db.table("PROVEEDORES").select("*").execute().data)
-        lista_proveedores = df_prov['Razon_Social'].tolist() if not df_prov.empty else ["No hay proveedores"]
+        
+        if not df_prov.empty:
+            # Aseguramos que el ID y la Razón Social sean texto para evitar errores de formato
+            df_prov['ID_Proveedor'] = df_prov['ID_Proveedor'].astype(str)
+            df_prov['Razon_Social'] = df_prov['Razon_Social'].astype(str)
+            
+            # Creamos la etiqueta combinada: "NOMBRE (ID)"
+            df_prov['Label_Proveedor'] = df_prov['Razon_Social'] + " (" + df_prov['ID_Proveedor'] + ")"
+            lista_proveedores = df_prov['Label_Proveedor'].tolist()
+            
+            # Diccionario útil para recuperar el ID real si lo necesitás al guardar en COMPRAS_CABECERA
+            dict_proveedores = dict(zip(df_prov['Label_Proveedor'], df_prov['ID_Proveedor']))
+        else:
+            lista_proveedores = ["No hay proveedores"]
+            dict_proveedores = {}
         
         if 'carrito_compra' not in st.session_state: st.session_state.carrito_compra = []
         if "ver_historial" not in st.session_state: st.session_state.ver_historial = False
@@ -5340,10 +5354,27 @@ else:
             c1, c1_btn, c2, c3 = st.columns([1, 0.2, 1.5, 1])
             
             with c1:
-                prov_sel = st.selectbox("Proveedor", lista_proveedores, 
-                                        index=lista_proveedores.index(st.session_state.get("temp_prov", lista_proveedores[0])) 
-                                        if st.session_state.get("temp_prov") in lista_proveedores else 0,
-                                        key="prov_main")
+                # Buscamos el índice por defecto de forma segura
+                temp_p = st.session_state.get("temp_prov", "")
+                # Si temp_prov es solo el nombre, intentamos buscar el label que lo contenga
+                default_idx = 0
+                if temp_p:
+                    for idx, item in enumerate(lista_proveedores):
+                        if temp_p in item:
+                            default_idx = idx
+                            break
+        
+                prov_sel = st.selectbox(
+                    "Proveedor", 
+                    lista_proveedores, 
+                    index=default_idx,
+                    key="prov_main"
+                )
+                
+                # 🔑 AQUÍ OBTENÉS EL ID PURO O EL NOMBRE LIMPIO PARA GUARDAR EN SUPABASE:
+                # Si necesitás el ID (ej: "0001"):
+                id_prov_seleccionado = dict_proveedores.get(prov_sel, None)
+                
                 fecha_factura = st.date_input("Fecha de Factura")
             
             with c1_btn:
