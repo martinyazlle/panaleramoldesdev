@@ -263,12 +263,30 @@ def render_modulo_campanas(db):
             use_container_width=True
         )
 
-        plantilla_msg = st.text_area(
-            "Editá el mensaje (usá {nombre} para insertar el primer nombre automáticamente):",
-            value=plantilla_default,
-            height=100,
-            key=f"camp_plantilla_{prefijo_key}"
-        )
+        col_txt, col_btn = st.columns([4, 1.3], vertical_alignment="center")
+        with col_txt:
+            plantilla_msg = st.text_area(
+                "Editá el mensaje (usá {nombre} para insertar el primer nombre automáticamente):",
+                value=plantilla_default,
+                height=100,
+                key=f"camp_plantilla_{prefijo_key}"
+            )
+        with col_btn:
+            st.write("")
+            if st.button("✨ Aplicar a todos", key=f"btn_aplicar_{prefijo_key}", type="primary", use_container_width=True):
+                for _, r_ap in df_clientes.iterrows():
+                    n_raw = str(r_ap["Nombre"] or "").strip()
+                    rz_raw = str(r_ap["Razón Social"] or "").strip()
+                    if n_raw:
+                        p_nom = n_raw.split()[0].upper()
+                    elif rz_raw:
+                        p_nom = rz_raw.split()[0].upper()
+                    else:
+                        p_nom = "Cliente"
+
+                    card_key = f"txt_camp_{prefijo_key}_{r_ap['ID_Cliente']}"
+                    st.session_state[card_key] = plantilla_msg.replace("{nombre}", p_nom)
+                st.toast("✅ Mensaje actualizado en todas las tarjetas.")
 
         st.markdown("#### 📋 3. Listado de Clientes Segmentados")
         for _, row in df_clientes.iterrows():
@@ -292,7 +310,9 @@ def render_modulo_campanas(db):
             dias_inact = int(row["dias_inactivo"]) if pd.notnull(row["dias_inactivo"]) else 0
             zona_str = str(row["Zona"]).strip() if pd.notnull(row["Zona"]) and str(row["Zona"]).strip() else "Sin zona"
 
-            mensaje_personalizado = plantilla_msg.replace("{nombre}", primer_nombre)
+            card_key = f"txt_camp_{prefijo_key}_{row['ID_Cliente']}"
+            if card_key not in st.session_state:
+                st.session_state[card_key] = plantilla_msg.replace("{nombre}", primer_nombre)
 
             with st.container(border=True):
                 c_datos, c_stats, c_msg, c_wsp = st.columns([2.2, 1.8, 3, 1.2], vertical_alignment="center")
@@ -309,19 +329,18 @@ def render_modulo_campanas(db):
                     st.caption(f"⏳ Hace **{dias_inact} días**")
 
                 with c_msg:
-                    st.text_area(
+                    mensaje_actual = st.text_area(
                         "Mensaje:",
-                        value=mensaje_personalizado,
                         height=95,
-                        key=f"txt_camp_{prefijo_key}_{row['ID_Cliente']}",
+                        key=card_key,
                         label_visibility="collapsed"
                     )
 
                 with c_wsp:
                     if len(tel_limpio) >= 10:
                         num_wsp = tel_limpio if tel_limpio.startswith("54") else f"549{tel_limpio}"
-                        texto_url = urllib.parse.quote(mensaje_personalizado)
-                        url_wa = f"[https://wa.me/](https://wa.me/){num_wsp}?text={texto_url}"
+                        texto_url = urllib.parse.quote(mensaje_actual)
+                        url_wa = f"https://wa.me/{num_wsp}?text={texto_url}"
                         st.link_button("📲 Enviar WA", url=url_wa, use_container_width=True, type="primary")
                     else:
                         st.button("Sin Teléfono", disabled=True, key=f"no_tel_{prefijo_key}_{row['ID_Cliente']}", use_container_width=True)
