@@ -4,7 +4,7 @@ import urllib.parse
 
 def render_modulo_campanas(db):
     st.header("🎯 Segmentación y Campañas de Difusión")
-    st.caption("Filtrá clientes según sus compras reales y enviá ofertas personalizadas por WhatsApp.")
+    st.caption("Filtrá clientes según sus compras reales y enviá ofertas o mensajes de reactivación por WhatsApp.")
 
     try:
         # 1. Carga de datos desde Supabase
@@ -18,9 +18,11 @@ def render_modulo_campanas(db):
             st.info("📭 Todavía no hay preferencias registradas. A medida que registres ventas a clientes identificados, aparecerán aquí automáticamente.")
             return
 
-        # Cruce de tablas (Inner Join: solo clientes existentes)
+        # Cruce de tablas (Inner Join: excluye ID 0 y 1 si no están o los filtramos explícitamente)
         df_prefs["id_cliente"] = df_prefs["id_cliente"].astype(str)
         df_cli["ID_Cliente"] = df_cli["ID_Cliente"].astype(str)
+        df_cli = df_cli[~df_cli["ID_Cliente"].isin(["0", "1"])]
+
         df_merged = pd.merge(df_prefs, df_cli, left_on="id_cliente", right_on="ID_Cliente", how="inner")
 
         if df_merged.empty:
@@ -28,123 +30,217 @@ def render_modulo_campanas(db):
             return
 
         df_merged["ultima_compra_dt"] = pd.to_datetime(df_merged["ultima_compra"], errors="coerce", utc=True)
+        ahora_utc = pd.Timestamp.now(tz="UTC")
 
-        # --- 2. PANEL DE FILTROS DE SEGMENTACIÓN ---
-        with st.container(border=True):
-            st.markdown("#### 🔍 1. Definí el público objetivo")
-            c1, c2, c3, c4 = st.columns(4)
+        # --- SELECTOR DE MODO DE CAMPAÑA ---
+        modo_campana = st.radio(
+            "Seleccioná el objetivo de la campaña:",
+            options=[
+                "📢 Oferta por Producto (Clientes Activos)",
+                "💤 Reactivación (Clientes sin compras recientes)"
+            ],
+            horizontal=True,
+            key="camp_modo_selector"
+        )
 
-            # Rubro
-            rubros_disp = ["TODOS"] + sorted([r for r in df_merged["rubro"].dropna().unique() if str(r).strip()])
-            rubro_sel = c1.selectbox("Rubro", rubros_disp, key="camp_rubro")
+        st.divider()
 
-            df_filtrado = df_merged.copy()
-            if rubro_sel != "TODOS":
-                df_filtrado = df_filtrado[df_filtrado["rubro"] == rubro_sel]
+        # ==============================================================================
+        # MODO 1: OFERTA POR PRODUCTO (CLIENTES ACTIVOS)
+        # ==============================================================================
+        if "Oferta por Producto" in modo_campana:
+            with st.container(border=True):
+                st.markdown("#### 🔍 1. Definí el público objetivo")
+                c1, c2, c3, c4 = st.columns(4)
 
-            # Marca
-            marcas_disp = ["TODAS"] + sorted([m for m in df_filtrado["marca"].dropna().unique() if str(m).strip()])
-            marca_sel = c2.selectbox("Marca", marcas_disp, key="camp_marca")
-            if marca_sel != "TODAS":
-                df_filtrado = df_filtrado[df_filtrado["marca"] == marca_sel]
+                rubros_disp = ["TODOS"] + sorted([r for r in df_merged["rubro"].dropna().unique() if str(r).strip()])
+                rubro_sel = c1.selectbox("Rubro", rubros_disp, key="camp_rubro")
 
-            # Filtros dinámicos según Rubro
-            if "LECHE" in rubro_sel:
-                orden_etapas = ["ETAPA 1", "ETAPA 2", "ETAPA 3", "ETAPA 4", "ESCOLAR"]
-                raw_etapas = [e for e in df_filtrado["etapa"].dropna().unique() if str(e).strip()]
-                etapas_ord = sorted(raw_etapas, key=lambda x: orden_etapas.index(x.upper()) if x.upper() in orden_etapas else 99)
-                
-                etapa_sel = c3.selectbox("Etapa", ["TODAS"] + etapas_ord, key="camp_etapa")
-                if etapa_sel != "TODAS":
-                    df_filtrado = df_filtrado[df_filtrado["etapa"] == etapa_sel]
+                df_filtrado = df_merged.copy()
+                if rubro_sel != "TODOS":
+                    df_filtrado = df_filtrado[df_filtrado["rubro"] == rubro_sel]
 
-                formatos_disp = ["TODOS"] + sorted([f for f in df_filtrado["formato_leche"].dropna().unique() if str(f).strip()])
-                formato_sel = c4.selectbox("Formato Leche", formatos_disp, key="camp_formato")
-                if formato_sel != "TODOS":
-                    df_filtrado = df_filtrado[df_filtrado["formato_leche"] == formato_sel]
-            else:
-                lineas_disp = ["TODAS"] + sorted([l for l in df_filtrado["linea"].dropna().unique() if str(l).strip()])
-                linea_sel = c3.selectbox("Línea / Modelo", lineas_disp, key="camp_linea")
-                if linea_sel != "TODAS":
-                    df_filtrado = df_filtrado[df_filtrado["linea"] == linea_sel]
+                marcas_disp = ["TODAS"] + sorted([m for m in df_filtrado["marca"].dropna().unique() if str(m).strip()])
+                marca_sel = c2.selectbox("Marca", marcas_disp, key="camp_marca")
+                if marca_sel != "TODAS":
+                    df_filtrado = df_filtrado[df_filtrado["marca"] == marca_sel]
 
-                orden_talles = ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "JUNIOR", "CH", "EG", "EEG"]
-                raw_talles = [t for t in df_filtrado["talle"].dropna().unique() if str(t).strip()]
-                talles_ord = sorted(raw_talles, key=lambda x: orden_talles.index(x.upper()) if x.upper() in orden_talles else 99)
+                if "LECHE" in rubro_sel:
+                    orden_etapas = ["ETAPA 1", "ETAPA 2", "ETAPA 3", "ETAPA 4", "ESCOLAR"]
+                    raw_etapas = [e for e in df_filtrado["etapa"].dropna().unique() if str(e).strip()]
+                    etapas_ord = sorted(raw_etapas, key=lambda x: orden_etapas.index(x.upper()) if x.upper() in orden_etapas else 99)
+                    
+                    etapa_sel = c3.selectbox("Etapa", ["TODAS"] + etapas_ord, key="camp_etapa")
+                    if etapa_sel != "TODAS":
+                        df_filtrado = df_filtrado[df_filtrado["etapa"] == etapa_sel]
 
-                talle_sel = c4.selectbox("Talle", ["TODOS"] + talles_ord, key="camp_talle")
-                if talle_sel != "TODOS":
-                    df_filtrado = df_filtrado[df_filtrado["talle"] == talle_sel]
+                    formatos_disp = ["TODOS"] + sorted([f for f in df_filtrado["formato_leche"].dropna().unique() if str(f).strip()])
+                    formato_sel = c4.selectbox("Formato Leche", formatos_disp, key="camp_formato")
+                    if formato_sel != "TODOS":
+                        df_filtrado = df_filtrado[df_filtrado["formato_leche"] == formato_sel]
+                else:
+                    lineas_disp = ["TODAS"] + sorted([l for l in df_filtrado["linea"].dropna().unique() if str(l).strip()])
+                    linea_sel = c3.selectbox("Línea / Modelo", lineas_disp, key="camp_linea")
+                    if linea_sel != "TODAS":
+                        df_filtrado = df_filtrado[df_filtrado["linea"] == linea_sel]
 
-            st.divider()
-            c5, c6, c7 = st.columns(3)
-            dias_recencia = c5.number_input(
-                "Compraron en los últimos (días)", 
-                min_value=1, max_value=365, value=60, 
-                help="Evita ofrecer talles o etapas que el bebé ya superó."
-            )
-            min_compras = c6.number_input(
-                "Mínimo de compras realizadas", 
-                min_value=1, max_value=50, value=1,
-                help="Usá 2 o más para filtrar compradores habituales y descartar regalos únicos."
-            )
-            zonas_disp = ["TODAS"] + sorted([z for z in df_filtrado["Zona"].dropna().unique() if str(z).strip()])
-            zona_sel = c7.selectbox("Zona de reparto (Opcional)", zonas_disp, key="camp_zona")
-            if zona_sel != "TODAS":
-                df_filtrado = df_filtrado[df_filtrado["Zona"] == zona_sel]
+                    orden_talles = ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "JUNIOR", "CH", "EG", "EEG"]
+                    raw_talles = [t for t in df_filtrado["talle"].dropna().unique() if str(t).strip()]
+                    talles_ord = sorted(raw_talles, key=lambda x: orden_talles.index(x.upper()) if x.upper() in orden_talles else 99)
 
-        # Aplicar filtros de recencia y frecuencia
-        fecha_limite = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=int(dias_recencia))
-        df_filtrado = df_filtrado[
-            (df_filtrado["ultima_compra_dt"] >= fecha_limite) &
-            (df_filtrado["cantidad_compras"] >= int(min_compras))
-        ]
+                    talle_sel = c4.selectbox("Talle", ["TODOS"] + talles_ord, key="camp_talle")
+                    if talle_sel != "TODOS":
+                        df_filtrado = df_filtrado[df_filtrado["talle"] == talle_sel]
 
-        if df_filtrado.empty:
-            st.warning("⚠️ Ningún cliente cumple con esta combinación de filtros. Probá ampliar los días de recencia o quitar algún filtro.")
-            return
+                st.divider()
+                c5, c6, c7 = st.columns(3)
+                dias_recencia = c5.number_input(
+                    "Compraron en los últimos (días)", 
+                    min_value=1, max_value=365, value=60,
+                    key="camp_dias_activos"
+                )
+                min_compras = c6.number_input(
+                    "Mínimo de compras realizadas", 
+                    min_value=1, max_value=50, value=1,
+                    key="camp_min_compras_activos"
+                )
+                zonas_disp = ["TODAS"] + sorted([z for z in df_filtrado["Zona"].dropna().unique() if str(z).strip()])
+                zona_sel = c7.selectbox("Zona de reparto (Opcional)", zonas_disp, key="camp_zona_activos")
+                if zona_sel != "TODAS":
+                    df_filtrado = df_filtrado[df_filtrado["Zona"] == zona_sel]
 
-        # Consolidar por cliente único (sumando métricas si matcheó múltiples variantes dentro de un filtro amplio)
-        df_clientes = df_filtrado.groupby(
-            ["ID_Cliente", "Nombre", "Apellido", "Razón Social", "Telefono", "Zona"], 
-            as_index=False, 
-            dropna=False
-        ).agg({
-            "cantidad_compras": "sum",
-            "unidades_totales": "sum",
-            "ultima_compra_dt": "max"
-        }).sort_values(by="ultima_compra_dt", ascending=False)
+            fecha_limite = ahora_utc - pd.Timedelta(days=int(dias_recencia))
+            df_filtrado = df_filtrado[
+                (df_filtrado["ultima_compra_dt"] >= fecha_limite) &
+                (df_filtrado["cantidad_compras"] >= int(min_compras))
+            ]
 
-        # --- 3. ARMADO DE PLANTILLA DE MENSAJE ---
+            if df_filtrado.empty:
+                st.warning("⚠️ Ningún cliente cumple con esta combinación de filtros.")
+                return
+
+            df_clientes = df_filtrado.groupby(
+                ["ID_Cliente", "Nombre", "Apellido", "Razón Social", "Telefono", "Zona"], 
+                as_index=False, 
+                dropna=False
+            ).agg({
+                "cantidad_compras": "sum",
+                "unidades_totales": "sum",
+                "ultima_compra_dt": "max"
+            }).sort_values(by="ultima_compra_dt", ascending=False)
+
+            df_clientes["dias_inactivo"] = (ahora_utc - df_clientes["ultima_compra_dt"]).dt.days
+            df_clientes["detalle_ultimo_prod"] = ""
+            plantilla_default = "Hola {nombre}! 👋 Te escribimos de Pañalera Moldes porque tenemos una promo especial en productos que llevás habitualmente. Si querés que te pasemos los precios o te separemos, avisame! 🙏"
+            nombre_archivo_csv = f"campana_oferta_{rubro_sel.lower()}.csv"
+
+        # ==============================================================================
+        # MODO 2: REACTIVACIÓN (CLIENTES DORMIDOS / SIN COMPRAS RECIENTES)
+        # ==============================================================================
+        else:
+            with st.container(border=True):
+                st.markdown("#### 🔍 1. Filtrar clientes sin compras recientes")
+                r1, r2, r3, r4 = st.columns(4)
+
+                dias_min_inactivo = r1.number_input(
+                    "Última compra hace MÁS de (días)",
+                    min_value=7, max_value=365, value=35,
+                    help="Ej: 35 días muestra clientes que hace más de un mes no vuelven al local.",
+                    key="reac_dias_min"
+                )
+                dias_max_inactivo = r2.number_input(
+                    "Pero hace MENOS de (días)",
+                    min_value=15, max_value=730, value=120,
+                    help="Evita contactar clientes de hace más de 4-6 meses cuyo bebé ya dejó los pañales.",
+                    key="reac_dias_max"
+                )
+                min_compras_hist = r3.number_input(
+                    "Compras históricas mínimas",
+                    min_value=1, max_value=50, value=2,
+                    help="Recomendado 2+: apunta a recuperar clientes que eran habituales y dejaron de venir.",
+                    key="reac_min_compras"
+                )
+                zonas_disp = ["TODAS"] + sorted([z for z in df_merged["Zona"].dropna().unique() if str(z).strip()])
+                zona_reac = r4.selectbox("Zona de reparto (Opcional)", zonas_disp, key="reac_zona")
+
+            # Ordenar por compra más reciente para identificar el último producto que llevó cada cliente
+            df_sorted = df_merged.sort_values(by="ultima_compra_dt", ascending=False).copy()
+
+            def armar_etiqueta_prod(row):
+                partes = [str(row.get("rubro", "")).strip(), str(row.get("marca", "")).strip()]
+                if row.get("linea"): partes.append(str(row["linea"]).strip())
+                if row.get("talle"): partes.append(f"Talle {row['talle']}".strip())
+                if row.get("etapa"): partes.append(str(row["etapa"]).strip())
+                if row.get("formato_leche"): partes.append(str(row["formato_leche"]).strip())
+                return " - ".join([p for p in partes if p])
+
+            df_sorted["etiqueta_prod"] = df_sorted.apply(armar_etiqueta_prod, axis=1)
+
+            # Consolidar a nivel CLIENTE GLOBAL (fecha real de su última visita, sin importar qué llevó)
+            df_clientes = df_sorted.groupby(
+                ["ID_Cliente", "Nombre", "Apellido", "Razón Social", "Telefono", "Zona"],
+                as_index=False,
+                dropna=False
+            ).agg({
+                "cantidad_compras": "sum",
+                "unidades_totales": "sum",
+                "ultima_compra_dt": "max",
+                "etiqueta_prod": "first"  # Toma el producto de su última compra
+            }).rename(columns={"etiqueta_prod": "detalle_ultimo_prod"})
+
+            df_clientes["dias_inactivo"] = (ahora_utc - df_clientes["ultima_compra_dt"]).dt.days
+
+            # Aplicar filtros de ventana de inactividad, frecuencia histórica y zona
+            df_clientes = df_clientes[
+                (df_clientes["dias_inactivo"] >= int(dias_min_inactivo)) &
+                (df_clientes["dias_inactivo"] <= int(dias_max_inactivo)) &
+                (df_clientes["cantidad_compras"] >= int(min_compras_hist))
+            ]
+
+            if zona_reac != "TODAS":
+                df_clientes = df_clientes[df_clientes["Zona"] == zona_reac]
+
+            df_clientes = df_clientes.sort_values(by="dias_inactivo", ascending=True)
+
+            if df_clientes.empty:
+                st.warning("⚠️ No se encontraron clientes inactivos en ese rango de días.")
+                return
+
+            plantilla_default = "Hola {nombre}! 👋 ¿Cómo estás? Hace un tiempito que no te vemos por Pañalera Moldes y queríamos saludarte 😊 Tenemos promos nuevas en pañales y leches (y envío a domicilio sin cargo según zona). ¡Si necesitás reponer algo, escribinos! 🙏"
+            nombre_archivo_csv = f"campana_reactivacion_{dias_min_inactivo}a{dias_max_inactivo}d.csv"
+
+        # ==============================================================================
+        # SECCIÓN COMÚN: PLANTILLA Y LISTADO DE CLIENTES
+        # ==============================================================================
         st.divider()
         col_m1, col_m2 = st.columns([3, 1], vertical_alignment="bottom")
         col_m1.markdown(f"#### 💬 2. Mensaje de Difusión ({len(df_clientes)} clientes encontrados)")
-        
-        # Botón de descarga CSV para envíos masivos externos
-        csv_export = df_clientes[["ID_Cliente", "Nombre", "Apellido", "Telefono", "cantidad_compras", "unidades_totales"]].to_csv(index=False).encode("utf-8")
+
+        csv_export = df_clientes[
+            ["ID_Cliente", "Nombre", "Apellido", "Telefono", "cantidad_compras", "unidades_totales", "dias_inactivo"]
+        ].to_csv(index=False).encode("utf-8")
+
         col_m2.download_button(
             label="📥 Exportar Lista (CSV)",
             data=csv_export,
-            file_name=f"campana_{rubro_sel.lower()}.csv",
+            file_name=nombre_archivo_csv,
             mime="text/csv",
             use_container_width=True
         )
 
         plantilla_msg = st.text_area(
             "Editá el mensaje (usá {nombre} para insertar el primer nombre automáticamente):",
-            value="Hola {nombre}! 👋 Te escribimos de Pañalera Moldes porque tenemos una promo especial en productos que llevás habitualmente. Si querés que te pasemos los precios o te separemos, avisame! 🙏",
+            value=plantilla_default,
             height=100,
-            key="camp_plantilla_txt"
+            key=f"camp_plantilla_{modo_campana[:10]}"
         )
 
-        # --- 4. LISTADO DE CLIENTES Y ACCIONES RÁPIDAS ---
         st.markdown("#### 📋 3. Listado de Clientes Segmentados")
         for _, row in df_clientes.iterrows():
             nombre_raw = str(row["Nombre"] or "").strip()
             apellido_raw = str(row["Apellido"] or "").strip()
             razon_raw = str(row["Razón Social"] or "").strip()
 
-            # Determinar nombre a mostrar y primer nombre para el saludo
             if nombre_raw:
                 display_nombre = f"{nombre_raw} {apellido_raw}".strip().upper()
                 primer_nombre = nombre_raw.split()[0].upper()
@@ -158,40 +254,42 @@ def render_modulo_campanas(db):
             tel_raw = str(row["Telefono"] or "").strip().replace(".0", "")
             tel_limpio = "".join(filter(str.isdigit, tel_raw))
             fecha_str = row["ultima_compra_dt"].strftime("%d/%m/%Y") if pd.notnull(row["ultima_compra_dt"]) else "-"
+            dias_inact = int(row["dias_inactivo"]) if pd.notnull(row["dias_inactivo"]) else 0
             zona_str = str(row["Zona"]).strip() if pd.notnull(row["Zona"]) and str(row["Zona"]).strip() else "Sin zona"
 
             mensaje_personalizado = plantilla_msg.replace("{nombre}", primer_nombre)
 
             with st.container(border=True):
-                c_datos, c_stats, c_msg, c_wsp = st.columns([2, 1.5, 3, 1.2], vertical_alignment="center")
+                c_datos, c_stats, c_msg, c_wsp = st.columns([2.2, 1.8, 3, 1.2], vertical_alignment="center")
                 
                 with c_datos:
                     st.markdown(f"👤 **{display_nombre}**")
                     st.caption(f"📞 `{tel_raw if tel_raw else 'Sin teléfono'}` | 📍 {zona_str}")
+                    if row["detalle_ultimo_prod"]:
+                        st.caption(f"🛍️ Último: **{row['detalle_ultimo_prod']}**")
                 
                 with c_stats:
-                    st.caption(f"🛒 Compras: **{int(row['cantidad_compras'])}**")
-                    st.caption(f"📦 Unidades: **{int(row['unidades_totales'])}**")
-                    st.caption(f"📅 Última: **{fecha_str}**")
+                    st.caption(f"🛒 Compras hist.: **{int(row['cantidad_compras'])}**")
+                    st.caption(f"📅 Última compra: **{fecha_str}**")
+                    st.caption(f"⏳ Hace **{dias_inact} días**")
                 
                 with c_msg:
                     st.text_area(
                         "Mensaje:",
                         value=mensaje_personalizado,
                         height=95,
-                        key=f"txt_camp_{row['ID_Cliente']}",
+                        key=f"txt_camp_{modo_campana[:4]}_{row['ID_Cliente']}",
                         label_visibility="collapsed"
                     )
                 
                 with c_wsp:
                     if len(tel_limpio) >= 10:
-                        # Agregar código de país Argentina (549) si no lo tiene
                         num_wsp = tel_limpio if tel_limpio.startswith("54") else f"549{tel_limpio}"
                         texto_url = urllib.parse.quote(mensaje_personalizado)
                         url_wa = f"https://wa.me/{num_wsp}?text={texto_url}"
                         st.link_button("📲 Enviar WA", url=url_wa, use_container_width=True, type="primary")
                     else:
-                        st.button("Sin Teléfono", disabled=True, key=f"no_tel_{row['ID_Cliente']}", use_container_width=True)
+                        st.button("Sin Teléfono", disabled=True, key=f"no_tel_{modo_campana[:4]}_{row['ID_Cliente']}", use_container_width=True)
 
     except Exception as e:
         st.error(f"Error al cargar el módulo de Campañas: {e}")
