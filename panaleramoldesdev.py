@@ -16,6 +16,7 @@ from ortools.constraint_solver import pywrapcp
 from modulos import reportes
 from modulos.modulo_desempenio import render_modulo_desempenio
 from modulos.campanas import render_modulo_campanas
+from modulos.presupuestos import render_modulo_presupuestos
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Cargamos los datos de forma segura desde secrets.toml
@@ -1113,7 +1114,7 @@ else:
         
         if st.session_state.rol == "Administrador":
             opciones_disponibles.extend([
-                "🛒 Punto de Venta", "👥 Clientes", "🎯 Campañas", "📋 Historial de Ventas", 
+                "🛒 Punto de Venta", "📄 Presupuestos", "👥 Clientes", "🎯 Campañas", "📋 Historial de Ventas", 
                 "⚙️ Configuración Pagos", "📦 Productos",
                 "📦 Stock", "🚚 Proveedores", "📦 Compras", "👥 Vendedores", 
                 "⚙️ Auditoría", "📈 Reporte de Utilidades", "🚚 Gestión de Repartos", 
@@ -2358,6 +2359,12 @@ else:
                         st.error(f"Error al guardar pendiente: {e}")
         else:
             st.info("El carrito está vacío.")
+
+    # =====================================================================
+    # MODULO: 📄 PRESUPUESTOS
+    # =====================================================================
+    elif menu == "📄 Presupuestos":
+        render_modulo_presupuestos(db, st.session_state.get("usuario", "Administrador"))
 
     # =====================================================================
     # MODULO: 👥 CLIENTES
