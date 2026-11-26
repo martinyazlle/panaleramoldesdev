@@ -1018,36 +1018,113 @@ else:
 
     @st.dialog("➕ Alta Rápida de Producto", width="large")
     def modal_alta_rapida_producto():
-        # Obtener opciones globales de forma segura (para no romper si no están definidas)
         rubros_opt = LISTA_RUBROS if 'LISTA_RUBROS' in globals() else ["General", "OTROS"]
         prov_opt = lista_proveedores if 'lista_proveedores' in globals() else ["Genérico"]
-    
+
+        # 1. Selector de Rubro FUERA del form para habilitar los campos dinámicos dentro del modal
+        rubro_nuevo = st.selectbox("Rubro*", options=rubros_opt, key="alta_rap_rubro")
+
+        rubro_upper = str(rubro_nuevo).upper().strip()
+        es_rubro_panal = rubro_upper in ["PAÑALES", "PANALES", "PAÑALES ADULTOS", "PANALES ADULTOS"]
+        es_rubro_leche = rubro_upper in ["LECHE", "LECHES"] and "SACALECHE" not in rubro_upper
+
+        # Obtener líneas existentes (de session_state o consultando rápido a Supabase si fue invalidado)
+        lineas_existentes = []
+        df_ref_lineas = st.session_state.get("df_prod")
+        if df_ref_lineas is None or df_ref_lineas.empty:
+            try:
+                res_l = db.table("PRODUCTOS").select("Linea").execute()
+                df_ref_lineas = pd.DataFrame(res_l.data) if res_l.data else pd.DataFrame()
+            except Exception:
+                df_ref_lineas = pd.DataFrame()
+
+        if not df_ref_lineas.empty and "Linea" in df_ref_lineas.columns:
+            lineas_raw = df_ref_lineas["Linea"].dropna().astype(str).str.strip().str.title().unique().tolist()
+            lineas_existentes = sorted([l for l in lineas_raw if l and l.lower() != "none"])
+
+        # Preseleccionar proveedor si ya está elegido en la compra actual (opcional)
+        idx_prov = 0
+        prov_actual_compra = st.session_state.get("comp_prov_sel") or st.session_state.get("prov_compra")
+        if prov_actual_compra and prov_actual_compra in prov_opt:
+            idx_prov = prov_opt.index(prov_actual_compra)
+
         with st.form("form_alta_producto_rapido", clear_on_submit=False):
             c_alta1, c_alta2 = st.columns(2)
-            
+
             with c_alta1:
                 id_nuevo = st.text_input("Código / ID Producto*", key="alta_rap_id").strip()
                 nombre_nuevo = st.text_input("Descripción / Nombre*", key="alta_rap_nom").strip()
                 marca_nueva = st.text_input("Marca", key="alta_rap_marca").strip()
-                rubro_nuevo = st.selectbox("Rubro", options=rubros_opt, key="alta_rap_rubro")
-                prov_seleccionado = st.selectbox("Proveedor", options=prov_opt, key="alta_rap_prov")
-                
+                prov_seleccionado = st.selectbox("Proveedor", options=prov_opt, index=idx_prov, key="alta_rap_prov")
+                stock_ini = st.number_input(
+                    "Stock Inicial (antes de esta compra)",
+                    min_value=0,
+                    value=0,
+                    step=1,
+                    help="Dejar en 0 si es un producto nuevo: las unidades de esta factura se sumarán al guardar la compra.",
+                    key="alta_rap_stock"
+                )
+
             with c_alta2:
-                stock_ini = st.number_input("Stock Inicial", min_value=0, value=0, step=1, key="alta_rap_stock")
                 costo_ini = st.number_input("Precio Costo ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_costo")
                 p1 = st.number_input("Precio Lista 1 ($)*", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p1")
                 p2 = st.number_input("Precio Lista 2 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p2")
                 p3 = st.number_input("Precio Lista 3 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p3")
                 p4 = st.number_input("Precio Lista 4 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p4")
                 p5 = st.number_input("Precio Lista 5 ($)", min_value=0.0, value=0.0, step=10.0, key="alta_rap_p5")
-    
+
+            # --- SECCIÓN DINÁMICA DE ATRIBUTOS OBLIGATORIOS ---
+            talle_val, linea_val, tam_pk_val, tipo_val = None, None, None, None
+            etapa_val, formato_val, pres_val = None, None, None
+
+            if es_rubro_panal:
+                st.markdown("---")
+                st.markdown("##### 🩺 Atributos Obligatorios para Pañales")
+                c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+
+                opts_talle = [""] + ["PR", "RN", "RN+", "P", "M", "G", "XG", "XXG", "XXXG", "Junior", "CH", "EG", "EEG"]
+                talle_val = c_p1.selectbox("Talle*", options=opts_talle, key="alta_rap_talle")
+
+                opts_linea = [""] + lineas_existentes + ["➕ Otra / Crear nueva..."]
+                linea_sel = c_p2.selectbox("Línea*", options=opts_linea, key="alta_rap_linea_sel")
+                linea_nueva_txt = c_p2.text_input(
+                    "Nueva Línea*",
+                    value="",
+                    key="alta_rap_linea_text",
+                    help="Escribí aquí si elegiste '➕ Otra / Crear nueva...'"
+                )
+                linea_val = linea_nueva_txt.strip() if linea_sel == "➕ Otra / Crear nueva..." else linea_sel
+
+                opts_tam = [""] + ["Regular", "Hiperpack", "Pack Ahorro", "Pack Mensual"]
+                tam_pk_val = c_p3.selectbox("Tamaño Paquete*", options=opts_tam, key="alta_rap_tam_pk")
+
+                opts_tipo = ["Con Abrojo", "Pants"]
+                tipo_val = c_p4.selectbox("Tipo*", options=opts_tipo, key="alta_rap_tipo")
+
+            elif es_rubro_leche:
+                st.markdown("---")
+                st.markdown("##### 🥛 Atributos Obligatorios para Leches")
+                c_l1, c_l2, c_l3 = st.columns(3)
+
+                opts_etapa = [""] + ["Etapa 1", "Etapa 2", "Etapa 3", "Etapa 4", "Escolar", "Común / Toda la familia"]
+                etapa_val = c_l1.selectbox("Etapa*", options=opts_etapa, key="alta_rap_etapa")
+
+                opts_formato = [""] + ["Líquida", "En Polvo"]
+                formato_val = c_l2.selectbox("Formato Leche*", options=opts_formato, key="alta_rap_formato")
+
+                opts_pres = [""] + ["190 ml", "200 ml", "500 ml", "1 Lt", "125 grs", "400 grs", "800 grs", "1 kg", "1.2 kg"]
+                pres_val = c_l3.selectbox("Presentación*", options=opts_pres, key="alta_rap_pres")
+
             st.caption("* Campos obligatorios")
-            # El botón ahora refleja que se añadirá directamente a la compra
-            btn_guardar = st.form_submit_button("💾 Guardar y Añadir a la Compra")
-    
+            btn_guardar = st.form_submit_button("💾 Guardar y Añadir a la Compra", type="primary", use_container_width=True)
+
         if btn_guardar:
             if not id_nuevo or not nombre_nuevo or p1 <= 0:
-                st.error("Por favor, completa los campos obligatorios (ID, Nombre y Precio 1 > 0).")
+                st.error("Por favor, completá los campos obligatorios generales (ID, Nombre y Precio 1 > 0).")
+            elif es_rubro_panal and (not talle_val or not linea_val or not tam_pk_val):
+                st.error("⚠️ Para productos del rubro Pañales debés completar Talle, Línea y Tamaño de Paquete.")
+            elif es_rubro_leche and (not etapa_val or not formato_val or not pres_val):
+                st.error("⚠️ Para productos del rubro Leche debés completar Etapa, Formato y Presentación.")
             else:
                 nuevo_prod = {
                     "ID_Producto": id_nuevo,
@@ -1061,28 +1138,34 @@ else:
                     "Precio_3": float(p3),
                     "Precio_4": float(p4),
                     "Precio_5": float(p5),
-                    "ID_Proveedor": prov_seleccionado if prov_seleccionado != "Genérico" else None,
+                    "ID_Proveedor": prov_seleccionado if prov_seleccionado not in ("", "Genérico") else None,
                     "Stock_Min": 0,
                     "Stock_Max": 0,
                     "Imagen": None,
-                    "Estado": "ACTIVO" # Aseguramos que entre activo
+                    "Estado": "ACTIVO",
+                    "Talle": talle_val if es_rubro_panal and talle_val != "" else None,
+                    "Linea": linea_val.title() if es_rubro_panal and linea_val != "" else None,
+                    "Tamanio_Paquete": tam_pk_val if es_rubro_panal and tam_pk_val != "" else None,
+                    "Tipo": tipo_val if es_rubro_panal else None,
+                    "Etapa": etapa_val if es_rubro_leche and etapa_val != "" else None,
+                    "Formato_Leche": formato_val if es_rubro_leche and formato_val != "" else None,
+                    "Presentacion": pres_val if es_rubro_leche and pres_val != "" else None
                 }
-                
+
                 try:
                     # 1. Guardar en Base de Datos
                     db.table("PRODUCTOS").insert(nuevo_prod).execute()
-                    
+
                     # 2. Invalidar caché para que el buscador global se actualice luego
-                    if 'df_prod' in st.session_state: 
-                        del st.session_state['df_prod']
-                    
-                    # 3. Auto-Añadirlo al carrito transformando el dict a una pd.Series 
-                    # (Para que tu función _agregar_al_carrito lo lea sin problemas)
+                    if "df_prod" in st.session_state:
+                        del st.session_state["df_prod"]
+
+                    # 3. Auto-Añadirlo al carrito de compras transformando el dict a pd.Series
                     pm_nuevo = pd.Series(nuevo_prod)
                     _agregar_al_carrito(pm_nuevo)
-                    
-                    st.success(f"🎉 ¡Producto guardado y añadido a la compra!")
-                    
+
+                    st.success("🎉 ¡Producto guardado con sus atributos y añadido a la compra!")
+
                     # 4. Cerrar el modal y refrescar
                     st.rerun()
                 except Exception as e:
