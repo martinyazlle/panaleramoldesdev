@@ -2399,13 +2399,17 @@ else:
             st.subheader("🚚 Forma de Entrega")
 
             # Ajustamos las columnas para incluir la tercera (col_e3)
-            col_e1, col_e2, col_e3 = st.columns([1, 2, 1]) 
+            col_e1, col_e2, col_e3 = st.columns([1.3, 1.8, 1]) 
 
-            # 1. Determinamos el índice inicial del radio
-            estado_tipo = st.session_state.get("tipo_entrega", "Mostrador")
-            idx_radio = 0 if estado_tipo == "Mostrador" else 1
+            opciones_entrega = ["Mostrador", "Cadete", "Reparto"]
+            if st.session_state.get("tipo_entrega") not in opciones_entrega:
+                st.session_state.tipo_entrega = "Mostrador"
                 
-            tipo_entrega = col_e1.radio("¿Cómo se entrega?", ["Mostrador", "Reparto"], index=idx_radio)
+            tipo_entrega = col_e1.radio(
+                "¿Cómo se entrega?",
+                opciones_entrega,
+                key="tipo_entrega"
+            )
 
             from datetime import datetime
 
@@ -2417,7 +2421,7 @@ else:
             # Inicializamos valores con lo que traemos de la venta recuperada
             direccion_elegida = st.session_state.get("direccion_entrega", "N/A")
             link_elegido = st.session_state.get("link_maps_entrega", "N/A")
-            obs_recuperada = st.session_state.get("observaciones_entrega", "") # 👈 1. RECUPERAMOS NOTA DE SESSION_STATE
+            obs_recuperada = st.session_state.get("observaciones_entrega", "")
 
             if tipo_entrega == "Reparto":
                 opciones_map = {}
@@ -2441,19 +2445,17 @@ else:
                 else:
                     direccion_elegida = col_e2.text_input("Dirección de entrega", value=direccion_elegida)
 
-            # 👈 2. NUEVO CAMPO VISUAL DE OBSERVACIONES
             observaciones_vta = st.text_input(
                 "📝 Observaciones / Notas para el Repartidor", 
                 value=obs_recuperada,
                 placeholder="Ej: Pasar antes de las 16hs, llamar al timbre 2B, cobro exacto..."
             )
 
-            # Actualizamos el estado
-            st.session_state.tipo_entrega = tipo_entrega
+            # Actualizamos el estado (tipo_entrega ya lo maneja automáticamente la key del radio)
             st.session_state.fecha_reparto = str(fecha_reparto)
             st.session_state.direccion_entrega = direccion_elegida
             st.session_state.link_maps_entrega = link_elegido
-            st.session_state.observaciones_entrega = observaciones_vta # 👈 3. GUARDAMOS EN SESSION_STATE
+            st.session_state.observaciones_entrega = observaciones_vta
 
         # --- 6. BOTONES DE CIERRE (Solo visibles si hay productos en el carrito) ---
         if st.session_state.carrito_vta:
